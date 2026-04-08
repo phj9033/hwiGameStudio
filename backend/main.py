@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from backend.config import DATABASE_PATH
 from backend.database import init_db
+from backend.routes.projects import router as projects_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -9,6 +10,8 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Game Studio Sub-Agents", version="0.1.0", lifespan=lifespan)
+
+app.include_router(projects_router)
 
 @app.get("/api/health")
 async def health():
