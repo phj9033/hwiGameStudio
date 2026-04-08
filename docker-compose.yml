@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./agents:/app/agents
+      - ./projects:/app/projects
+    env_file:
+      - .env
+    environment:
+      - DATABASE_PATH=/app/data/studio.db
+      - AGENTS_DIR=/app/agents
+      - PROJECTS_DIR=/app/projects
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
