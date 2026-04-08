@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from backend.models.ticket import (
     TicketCreate,
     TicketUpdate,
@@ -241,3 +241,79 @@ async def assign_ticket(ticket_id: int):
         await db.commit()
 
         return await _get_ticket_detail(ticket_id, db)
+
+
+@router.post("/{ticket_id}/run")
+async def run_ticket(ticket_id: int, background_tasks: BackgroundTasks):
+    """Run ticket execution pipeline in background"""
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        # Validate ticket exists and is in runnable state
+        check = await db.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,))
+        row = await check.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if row["status"] not in ("open", "assigned", "failed"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot run ticket in status: {row['status']}"
+            )
+
+        # Update status to running
+        await db.execute(
+            "UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            ("running", ticket_id)
+        )
+        await db.commit()
+
+    # Launch pipeline executor in background
+    from backend.services.pipeline_executor import PipelineExecutor
+    executor = PipelineExecutor()
+    background_tasks.add_task(executor.run_ticket, ticket_id)
+
+    return {"message": "Ticket execution started", "ticket_id": ticket_id}
+
+
+@router.post("/{ticket_id}/cancel")
+async def cancel_ticket(ticket_id: int):
+    """Cancel running ticket execution"""
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        # Validate ticket exists
+        check = await db.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,))
+        row = await check.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if row["status"] != "running":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot cancel ticket in status: {row['status']}"
+            )
+
+    # Cancel the ticket
+    from backend.services.pipeline_executor import PipelineExecutor
+    executor = PipelineExecutor()
+    await executor.cancel_ticket(ticket_id)
+
+    return {"message": "Ticket cancelled", "ticket_id": ticket_id}
+
+
+@router.post("/{ticket_id}/retry")
+async def retry_ticket(ticket_id: int, background_tasks: BackgroundTasks):
+    """Retry failed ticket from the failed step"""
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        # Validate ticket exists and is in failed state
+        check = await db.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,))
+        row = await check.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if row["status"] != "failed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot retry ticket in status: {row['status']}"
+            )
+
+    # Launch retry in background
+    from backend.services.pipeline_executor import PipelineExecutor
+    executor = PipelineExecutor()
+    background_tasks.add_task(executor.retry_ticket, ticket_id)
+
+    return {"message": "Ticket retry started", "ticket_id": ticket_id}
