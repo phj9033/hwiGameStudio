@@ -146,15 +146,88 @@ with tab1:
 
 with tab2:
     st.subheader("AI-Generated Ticket")
-    st.info("AI ticket generation will be implemented in Task 7: AI Ticket Analyzer")
+    st.info("Describe your game feature and AI will decompose it into actionable tickets with agent assignments")
 
-    st.markdown("""
-    This feature will allow you to:
-    - Describe a game feature in natural language
-    - AI analyzes and generates a multi-step pipeline
-    - Automatically assigns agents to each step
-    - Suggests context documents and instructions
-    """)
+    with st.form("ai_generate_ticket"):
+        project = st.selectbox(
+            "Project*",
+            options=[p["id"] for p in projects],
+            format_func=lambda x: next(p["display_name"] for p in projects if p["id"] == x),
+            key="ai_project"
+        )
 
-    st.text_area("Feature Description (Coming Soon)", disabled=True, height=200)
-    st.button("Generate Ticket", disabled=True)
+        task_description = st.text_area(
+            "Feature Description*",
+            placeholder="e.g., Build a combat system with melee and ranged attacks, health bars, and damage feedback",
+            height=200
+        )
+
+        # Hardcoded agent list for demo
+        agent_list = [
+            "sr_game_designer",
+            "mechanics_developer",
+            "ui_ux_designer",
+            "qa_tester",
+            "market_analyst"
+        ]
+
+        st.caption(f"Available agents: {', '.join(agent_list)}")
+
+        generate_button = st.form_submit_button("Generate Recommendations", type="primary")
+
+    if generate_button:
+        if not task_description:
+            st.error("Feature description is required")
+        else:
+            with st.spinner("Analyzing task and generating recommendations..."):
+                try:
+                    response = requests.post(
+                        f"{BACKEND_URL}/api/tickets/decompose",
+                        json={
+                            "description": task_description,
+                            "agent_list": agent_list
+                        },
+                        timeout=30
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        tickets = result.get("tickets", [])
+
+                        if tickets:
+                            st.success(f"Generated {len(tickets)} ticket recommendation(s)!")
+
+                            for idx, ticket in enumerate(tickets):
+                                with st.expander(f"Ticket {idx + 1}: {ticket['title']}", expanded=True):
+                                    st.markdown(f"**Description:** {ticket['description']}")
+                                    st.markdown(f"**Steps:** {len(ticket.get('steps', []))}")
+
+                                    for step in ticket.get("steps", []):
+                                        st.markdown(f"  - Step {step['step_order']}:")
+                                        for agent in step.get("agents", []):
+                                            st.markdown(f"    - **{agent['agent_name']}** ({agent['cli_provider']}): {agent['instruction']}")
+
+                                    # Create ticket button
+                                    if st.button(f"Create This Ticket", key=f"create_{idx}"):
+                                        create_response = requests.post(
+                                            f"{BACKEND_URL}/api/tickets/",
+                                            json={
+                                                "project_id": project,
+                                                "title": ticket["title"],
+                                                "description": ticket["description"],
+                                                "source": "ai_generated",
+                                                "created_by": "AI",
+                                                "steps": ticket.get("steps", [])
+                                            },
+                                            timeout=10
+                                        )
+                                        if create_response.status_code == 200:
+                                            st.success(f"Ticket '{ticket['title']}' created!")
+                                        else:
+                                            st.error(f"Failed to create ticket: {create_response.json().get('detail', 'Unknown error')}")
+                        else:
+                            st.warning("No tickets generated. Try providing more details.")
+                    else:
+                        st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
+                except requests.exceptions.RequestException as e:
+                    st.error(f"Failed to connect to backend: {e}")

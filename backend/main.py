@@ -8,6 +8,7 @@ from backend.routes.agents import router as agents_router
 from backend.routes.runs import router as runs_router
 from backend.routes.usage import router as usage_router
 from backend.routes.providers import router as providers_router
+from backend.routes.documents import router as documents_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -22,6 +23,7 @@ app.include_router(agents_router)
 app.include_router(runs_router)
 app.include_router(usage_router)
 app.include_router(providers_router)
+app.include_router(documents_router)
 
 @app.get("/api/health")
 async def health():

@@ -12,8 +12,22 @@ from backend.database import get_db
 import backend.config
 import json
 from datetime import datetime
+from typing import List
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
+
+
+# Request models for new endpoints
+class DiffAnalysisRequest(BaseModel):
+    file_path: str
+    diff_content: str
+    agent_list: List[str]
+
+
+class DecomposeRequest(BaseModel):
+    description: str
+    agent_list: List[str]
 
 
 async def _get_ticket_detail(ticket_id: int, db) -> TicketResponse:
@@ -133,6 +147,39 @@ async def list_tickets(project_id: int = None, page: int = 1, per_page: int = 50
         )
 
 
+@router.post("/from-diff")
+async def create_tickets_from_diff(request: DiffAnalysisRequest):
+    """Analyze document diff and recommend tickets"""
+    from backend.services.ticket_analyzer import TicketAnalyzer
+
+    analyzer = TicketAnalyzer()
+    try:
+        result = await analyzer.analyze_diff(
+            request.file_path,
+            request.diff_content,
+            request.agent_list
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/decompose")
+async def decompose_task(request: DecomposeRequest):
+    """Decompose task description into recommended tickets"""
+    from backend.services.ticket_analyzer import TicketAnalyzer
+
+    analyzer = TicketAnalyzer()
+    try:
+        result = await analyzer.decompose_task(
+            request.description,
+            request.agent_list
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/", response_model=TicketResponse)
 async def create_ticket(ticket: TicketCreate):
     """Create a ticket with nested steps and agents"""
@@ -223,6 +270,41 @@ async def update_ticket(ticket_id: int, ticket: TicketUpdate):
             await db.commit()
 
         return await _get_ticket_detail(ticket_id, db)
+
+
+@router.post("/{ticket_id}/auto-assign")
+async def auto_assign_ticket(ticket_id: int):
+    """Analyze ticket description and recommend agent assignments"""
+    from backend.services.ticket_analyzer import TicketAnalyzer
+
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        # Get ticket
+        ticket_row = await db.execute(
+            "SELECT description FROM tickets WHERE id = ?",
+            (ticket_id,)
+        )
+        ticket = await ticket_row.fetchone()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        # Get available agents (simplified - just using hardcoded list for now)
+        # In production, you'd fetch from agents table
+        agent_list = [
+            "sr_game_designer",
+            "mechanics_developer",
+            "ui_ux_designer",
+            "qa_tester"
+        ]
+
+        analyzer = TicketAnalyzer()
+        try:
+            result = await analyzer.decompose_task(
+                ticket["description"],
+                agent_list
+            )
+            return result
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/{ticket_id}/assign", response_model=TicketResponse)
