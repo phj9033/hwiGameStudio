@@ -19,7 +19,7 @@ async def test_cli_runner_success():
         b""
     ))
 
-    with patch('asyncio.create_subprocess_shell', return_value=mock_process):
+    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
         result = await runner.run(
             command="echo test",
             prompt="Test prompt",
@@ -48,7 +48,7 @@ async def test_cli_runner_failure():
         b"Error: command failed"
     ))
 
-    with patch('asyncio.create_subprocess_shell', return_value=mock_process):
+    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
         result = await runner.run(
             command="false",
             prompt="Test prompt",
@@ -74,7 +74,7 @@ async def test_cli_runner_no_tokens():
         b""
     ))
 
-    with patch('asyncio.create_subprocess_shell', return_value=mock_process):
+    with patch('asyncio.create_subprocess_exec', return_value=mock_process):
         result = await runner.run(
             command="echo test",
             prompt="Test prompt",
@@ -106,7 +106,7 @@ async def test_cli_runner_with_env_vars():
         captured_env.update(kwargs.get('env', {}))
         return mock_process
 
-    with patch('asyncio.create_subprocess_shell', side_effect=create_subprocess_spy):
+    with patch('asyncio.create_subprocess_exec', side_effect=create_subprocess_spy):
         result = await runner.run(
             command="echo test",
             prompt="Test prompt",
@@ -141,7 +141,7 @@ async def test_cli_runner_prompt_file_handling():
         temp_files_created.extend(matches)
         return mock_process
 
-    with patch('asyncio.create_subprocess_shell', side_effect=track_temp_files):
+    with patch('asyncio.create_subprocess_exec', side_effect=track_temp_files):
         result = await runner.run(
             command="claude",
             prompt="Test prompt content",

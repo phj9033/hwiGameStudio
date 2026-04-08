@@ -17,9 +17,12 @@ def db_path():
 
 
 @pytest_asyncio.fixture
-async def setup_db(db_path, monkeypatch):
+async def setup_db(db_path, monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_PATH", db_path)
     monkeypatch.setattr("backend.config.DATABASE_PATH", db_path)
+    projects_dir = str(tmp_path / "projects")
+    os.makedirs(projects_dir, exist_ok=True)
+    monkeypatch.setattr("backend.config.PROJECTS_DIR", projects_dir)
     await init_db(db_path)
     yield db_path
 
@@ -268,27 +271,24 @@ async def test_runs_get_result_file(setup_test_data):
     data = setup_test_data
     agent_id = data["agent1_id"]
 
-    # First, update agent with result_path
+    # First, update agent with result_path inside PROJECTS_DIR
+    from backend.config import PROJECTS_DIR
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
-        # Create a temporary result file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        # Create a result file inside PROJECTS_DIR
+        result_path = os.path.join(PROJECTS_DIR, "result.txt")
+        with open(result_path, 'w') as f:
             f.write("Test result content")
-            result_path = f.name
 
-        try:
-            # Update agent with result_path
-            await client.put(f"/api/agents/runs/{agent_id}", json={
-                "result_path": result_path
-            })
+        # Update agent with result_path
+        await client.put(f"/api/agents/runs/{agent_id}", json={
+            "result_path": result_path
+        })
 
-            # Get result file
-            result_resp = await client.get(f"/api/runs/{agent_id}/result")
-            assert result_resp.status_code == 200
-            assert result_resp.text == "Test result content"
-        finally:
-            if os.path.exists(result_path):
-                os.unlink(result_path)
+        # Get result file
+        result_resp = await client.get(f"/api/runs/{agent_id}/result")
+        assert result_resp.status_code == 200
+        assert result_resp.text == "Test result content"
 
 
 @pytest.mark.asyncio
@@ -297,11 +297,12 @@ async def test_runs_get_result_file_not_found(setup_test_data):
     data = setup_test_data
     agent_id = data["agent1_id"]
 
+    from backend.config import PROJECTS_DIR
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
-        # Update agent with non-existent result_path
+        # Update agent with non-existent result_path inside PROJECTS_DIR
         await client.put(f"/api/agents/runs/{agent_id}", json={
-            "result_path": "/nonexistent/file.txt"
+            "result_path": os.path.join(PROJECTS_DIR, "nonexistent.txt")
         })
 
         # Get result file should return 404

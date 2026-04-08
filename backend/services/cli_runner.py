@@ -42,16 +42,19 @@ class CLIRunner:
             merged_env = os.environ.copy()
             merged_env.update(env)
 
-            # Execute command with prompt from temp file
-            full_command = f"{command} < {temp_file}"
+            # Execute command with prompt file via stdin
+            import shlex
+            cmd_parts = shlex.split(command)
 
-            process = await asyncio.create_subprocess_shell(
-                full_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=work_dir,
-                env=merged_env
-            )
+            with open(temp_file, 'r') as stdin_file:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd_parts,
+                    stdin=stdin_file,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=work_dir,
+                    env=merged_env
+                )
 
             pid = process.pid
 

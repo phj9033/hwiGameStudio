@@ -62,6 +62,13 @@ async def get_agent_result_file(agent_run_id: int):
         if not result_path:
             raise HTTPException(status_code=404, detail="No result file available")
 
+        # Validate result_path stays within allowed directories
+        from backend.config import PROJECTS_DIR
+        real_path = os.path.realpath(result_path)
+        allowed_dir = os.path.realpath(PROJECTS_DIR)
+        if not real_path.startswith(allowed_dir):
+            raise HTTPException(status_code=403, detail="Access denied: result path outside allowed directory")
+
         if not os.path.exists(result_path):
             raise HTTPException(status_code=404, detail="Result file not found")
 

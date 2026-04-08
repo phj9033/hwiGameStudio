@@ -1,6 +1,5 @@
 import streamlit as st
-import requests
-from backend.config import BACKEND_URL
+from frontend.api_client import get, post, patch
 
 st.set_page_config(page_title="Project Details", page_icon="📋", layout="wide")
 
@@ -8,45 +7,31 @@ st.title("📋 Project Details")
 
 # Project selector
 try:
-    response = requests.get(f"{BACKEND_URL}/api/projects?per_page=100", timeout=5)
-    if response.status_code == 200:
-        data = response.json()
-        projects = data.get("items", [])
+    data = get("/api/projects", params={"per_page": 100})
+    projects = data.get("items", [])
 
-        if not projects:
-            st.warning("No projects found. Create a project first on the Dashboard.")
-            if st.button("Go to Dashboard"):
-                st.switch_page("pages/1_dashboard.py")
-            st.stop()
-
-        # Project selection
-        project_options = {f"{p['display_name']} ({p['name']})": p for p in projects}
-        selected_name = st.selectbox(
-            "Select Project",
-            options=list(project_options.keys()),
-            index=0
-        )
-        project = project_options[selected_name]
-        project_id = project["id"]
-
-    else:
-        st.error(f"Failed to fetch projects: {response.status_code}")
+    if not projects:
+        st.warning("No projects found. Create a project first on the Dashboard.")
+        if st.button("Go to Dashboard"):
+            st.switch_page("pages/1_dashboard.py")
         st.stop()
 
-except requests.exceptions.RequestException as e:
+    project_options = {f"{p['display_name']} ({p['name']})": p for p in projects}
+    selected_name = st.selectbox("Select Project", options=list(project_options.keys()), index=0)
+    project = project_options[selected_name]
+    project_id = project["id"]
+
+except Exception as e:
     st.error(f"Failed to connect to backend: {e}")
-    st.info("Make sure the backend server is running on http://localhost:8000")
     st.stop()
 
 # Display project info
 st.divider()
 
-# Status indicator
 status_icon = "✅" if project["status"] == "active" else "❄️"
 st.markdown(f"## {status_icon} {project['display_name']}")
 st.caption(f"Project ID: `{project['name']}` | Created: {project['created_at']}")
 
-# Project metrics
 col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Engine", project["engine"])
@@ -61,34 +46,27 @@ st.divider()
 
 # Action buttons
 st.subheader("Actions")
-
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     if project["status"] == "active":
         if st.button("❄️ Freeze Project", use_container_width=True):
             try:
-                response = requests.post(f"{BACKEND_URL}/api/projects/{project_id}/freeze", timeout=5)
-                if response.status_code == 200:
-                    st.success("Project frozen successfully!")
-                    st.rerun()
-                else:
-                    st.error(f"Failed to freeze project: {response.json().get('detail', 'Unknown error')}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Request failed: {e}")
+                post(f"/api/projects/{project_id}/freeze")
+                st.success("Project frozen successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed: {e}")
 
 with col2:
     if project["status"] == "frozen":
         if st.button("▶️ Resume Project", use_container_width=True):
             try:
-                response = requests.post(f"{BACKEND_URL}/api/projects/{project_id}/resume", timeout=5)
-                if response.status_code == 200:
-                    st.success("Project resumed successfully!")
-                    st.rerun()
-                else:
-                    st.error(f"Failed to resume project: {response.json().get('detail', 'Unknown error')}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Request failed: {e}")
+                post(f"/api/projects/{project_id}/resume")
+                st.success("Project resumed successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed: {e}")
 
 with col3:
     if st.button("🔄 Start Over", use_container_width=True, type="secondary"):
@@ -97,14 +75,11 @@ with col3:
             confirm = st.checkbox("I understand this action cannot be undone")
             if st.button("Confirm Start Over", type="primary", disabled=not confirm):
                 try:
-                    response = requests.post(f"{BACKEND_URL}/api/projects/{project_id}/startover", timeout=5)
-                    if response.status_code == 200:
-                        st.success("Project reset successfully!")
-                        st.rerun()
-                    else:
-                        st.error(f"Failed to reset project: {response.json().get('detail', 'Unknown error')}")
-                except requests.exceptions.RequestException as e:
-                    st.error(f"Request failed: {e}")
+                    post(f"/api/projects/{project_id}/startover")
+                    st.success("Project reset successfully!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed: {e}")
 
 with col4:
     if st.button("📊 Back to Dashboard", use_container_width=True):
@@ -146,27 +121,8 @@ with st.expander("View/Edit Configuration", expanded=False):
                 if not update_data:
                     st.info("No changes detected")
                 else:
-                    response = requests.patch(
-                        f"{BACKEND_URL}/api/projects/{project_id}",
-                        json=update_data,
-                        timeout=5
-                    )
-                    if response.status_code == 200:
-                        st.success("Project updated successfully!")
-                        st.rerun()
-                    else:
-                        st.error(f"Failed to update project: {response.json().get('detail', 'Unknown error')}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Request failed: {e}")
-
-st.divider()
-
-# Future sections (placeholders)
-st.subheader("Tickets")
-st.info("📝 Ticket management will be available in the next release")
-
-st.subheader("Agents")
-st.info("🤖 Agent configuration will be available in a future release")
-
-st.subheader("Documents")
-st.info("📄 Document management will be available in a future release")
+                    patch(f"/api/projects/{project_id}", json=update_data)
+                    st.success("Project updated successfully!")
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Failed: {e}")

@@ -17,3 +17,13 @@ def put(path: str, json: dict = None):
     resp = requests.put(f"{BACKEND_URL}{path}", json=json)
     resp.raise_for_status()
     return resp.json()
+
+def patch(path: str, json: dict = None):
+    resp = requests.patch(f"{BACKEND_URL}{path}", json=json)
+    resp.raise_for_status()
+    return resp.json()
+
+def get_text(path: str):
+    resp = requests.get(f"{BACKEND_URL}{path}")
+    resp.raise_for_status()
+    return resp.text

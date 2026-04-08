@@ -13,7 +13,12 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 class AgentInfo(BaseModel):
     name: str
-    file_path: str
+
+
+def _validate_agent_name(name: str):
+    """Validate agent name to prevent path traversal attacks."""
+    if '..' in name or '/' in name or '\\' in name or '\0' in name:
+        raise HTTPException(400, "Invalid agent name")
 
 
 class AgentContent(BaseModel):
@@ -45,12 +50,13 @@ async def list_agents():
         name = os.path.splitext(os.path.basename(f))[0]
         if name.lower() == "readme":
             continue
-        agents.append(AgentInfo(name=name, file_path=f))
+        agents.append(AgentInfo(name=name))
     return agents
 
 
 @router.get("/{name}", response_model=AgentContent)
 async def get_agent(name: str):
+    _validate_agent_name(name)
     from backend.config import AGENTS_DIR
     path = os.path.join(AGENTS_DIR, f"{name}.md")
     if not os.path.exists(path):
@@ -62,6 +68,7 @@ async def get_agent(name: str):
 
 @router.put("/{name}", response_model=AgentContent)
 async def update_agent(name: str, update: AgentContentUpdate):
+    _validate_agent_name(name)
     from backend.config import AGENTS_DIR
     path = os.path.join(AGENTS_DIR, f"{name}.md")
     if not os.path.exists(path):

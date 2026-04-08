@@ -211,8 +211,7 @@ class PipelineExecutor:
                 await db.execute(
                     """UPDATE step_agents
                        SET status = ?, input_tokens = ?, output_tokens = ?, estimated_cost = ?,
-                           result_summary = ?, pid = ?, completed_at = CURRENT_TIMESTAMP,
-                           retry_count = retry_count + 1
+                           result_summary = ?, pid = ?, completed_at = CURRENT_TIMESTAMP
                        WHERE id = ?""",
                     (
                         status,
@@ -316,11 +315,11 @@ class PipelineExecutor:
                 (ticket_id, failed_step["step_order"])
             )
 
-            # Reset all agents in those steps
+            # Reset all agents in those steps and increment retry_count
             await db.execute(
                 """UPDATE step_agents
                    SET status = 'pending', started_at = NULL, completed_at = NULL,
-                       pid = NULL, result_summary = NULL
+                       pid = NULL, result_summary = NULL, retry_count = retry_count + 1
                    WHERE step_id IN (
                        SELECT id FROM ticket_steps
                        WHERE ticket_id = ? AND step_order >= ?

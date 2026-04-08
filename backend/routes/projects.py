@@ -259,7 +259,7 @@ async def startover_project(project_id: int):
 
         # Cancel all active tickets for this project
         await db.execute(
-            "UPDATE tickets SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE project_id = ? AND status IN ('open', 'in_progress')",
+            "UPDATE tickets SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE project_id = ? AND status NOT IN ('completed', 'cancelled')",
             (project_id,)
         )
 
