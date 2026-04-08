@@ -15,11 +15,15 @@ async def list_projects(page: int = 1, per_page: int = 20, status: Optional[str]
 
     async with get_db(backend.config.DATABASE_PATH) as db:
         # Build query with optional status filter
-        where_clause = f"WHERE status = '{status}'" if status else ""
+        params = []
+        where_clause = ""
+        if status:
+            where_clause = "WHERE status = ?"
+            params.append(status)
 
         # Get total count
         count_query = f"SELECT COUNT(*) FROM projects {where_clause}"
-        cursor = await db.execute(count_query)
+        cursor = await db.execute(count_query, tuple(params))
         total = (await cursor.fetchone())[0]
 
         # Get paginated results
@@ -30,7 +34,8 @@ async def list_projects(page: int = 1, per_page: int = 20, status: Optional[str]
             ORDER BY created_at DESC
             LIMIT ? OFFSET ?
         """
-        cursor = await db.execute(query, (per_page, offset))
+        params.extend([per_page, offset])
+        cursor = await db.execute(query, tuple(params))
         rows = await cursor.fetchall()
 
         items = [
