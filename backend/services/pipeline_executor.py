@@ -8,6 +8,7 @@ import backend.config
 from backend.services.cli_runner import CLIRunner
 from backend.services.prompt_builder import PromptBuilder
 from backend.services.token_parser import calculate_cost
+from backend.services.output_sanitizer import sanitize_output
 
 
 class PipelineExecutor:
@@ -51,7 +52,12 @@ class PipelineExecutor:
                 "SELECT * FROM projects WHERE id = ?", (ticket["project_id"],)
             )
             project = await project_row.fetchone()
-            project_context = f"Project: {project['display_name']}\nPath: {os.path.join(backend.config.PROJECTS_DIR, project['name'])}"
+            project_dir = os.path.join(backend.config.PROJECTS_DIR, project['name'])
+            os.makedirs(project_dir, exist_ok=True)
+            if not os.path.isdir(os.path.join(project_dir, ".git")):
+                import subprocess
+                subprocess.run(["git", "init"], cwd=project_dir, capture_output=True)
+            project_context = f"Project: {project['display_name']}\nPath: {project_dir}"
 
             # Execute steps sequentially
             for step in steps:
@@ -207,18 +213,29 @@ class PipelineExecutor:
                 # Determine status based on return code
                 status = "completed" if result["return_code"] == 0 else "failed"
 
+                # Save full stdout to file
+                result_path = None
+                if result["stdout"]:
+                    results_dir = os.path.join(work_dir, "results")
+                    os.makedirs(results_dir, exist_ok=True)
+                    result_filename = f"step{agent['step_id']}_{agent['agent_name']}_{agent_id}.md"
+                    result_path = os.path.join(results_dir, result_filename)
+                    with open(result_path, "w", encoding="utf-8") as f:
+                        f.write(result["stdout"])
+
                 # Update agent with results
                 await db.execute(
                     """UPDATE step_agents
                        SET status = ?, input_tokens = ?, output_tokens = ?, estimated_cost = ?,
-                           result_summary = ?, pid = ?, completed_at = CURRENT_TIMESTAMP
+                           result_summary = ?, result_path = ?, pid = ?, completed_at = CURRENT_TIMESTAMP
                        WHERE id = ?""",
                     (
                         status,
                         result["input_tokens"],
                         result["output_tokens"],
                         cost,
-                        result["stdout"][:1000] if result["stdout"] else result["stderr"][:1000],
+                        sanitize_output(result["stdout"][:1000]) if result["stdout"] else sanitize_output(result["stderr"][:1000]),
+                        result_path,
                         result["pid"],
                         agent_id
                     )
@@ -233,7 +250,7 @@ class PipelineExecutor:
                     """UPDATE step_agents
                        SET status = ?, result_summary = ?, completed_at = CURRENT_TIMESTAMP
                        WHERE id = ?""",
-                    ("failed", str(e)[:1000], agent_id)
+                    ("failed", sanitize_output(str(e)[:1000]), agent_id)
                 )
                 await db.commit()
                 raise

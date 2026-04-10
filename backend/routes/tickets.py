@@ -11,11 +11,16 @@ from backend.models.common import PaginatedResponse
 from backend.database import get_db
 import backend.config
 import json
+import asyncio
+import uuid
 from datetime import datetime
-from typing import List
+from typing import List, Dict, Any
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
+
+# In-memory store for async decompose jobs
+_decompose_jobs: Dict[str, Dict[str, Any]] = {}
 
 
 # Request models for new endpoints
@@ -164,20 +169,33 @@ async def create_tickets_from_diff(request: DiffAnalysisRequest):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/decompose")
-async def decompose_task(request: DecomposeRequest):
-    """Decompose task description into recommended tickets"""
+async def _run_decompose(job_id: str, description: str, agent_list: List[str]):
+    """Background task for decompose"""
     from backend.services.ticket_analyzer import TicketAnalyzer
-
     analyzer = TicketAnalyzer()
     try:
-        result = await analyzer.decompose_task(
-            request.description,
-            request.agent_list
-        )
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        result = await analyzer.decompose_task(description, agent_list)
+        _decompose_jobs[job_id] = {"status": "completed", "result": result}
+    except Exception as e:
+        _decompose_jobs[job_id] = {"status": "failed", "error": str(e)}
+
+
+@router.post("/decompose")
+async def decompose_task(request: DecomposeRequest):
+    """Start async decompose job and return job_id"""
+    job_id = str(uuid.uuid4())
+    _decompose_jobs[job_id] = {"status": "running"}
+    asyncio.create_task(_run_decompose(job_id, request.description, request.agent_list))
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/decompose/{job_id}")
+async def get_decompose_status(job_id: str):
+    """Check status of a decompose job"""
+    job = _decompose_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
 
 
 @router.post("/", response_model=TicketResponse)
@@ -270,6 +288,29 @@ async def update_ticket(ticket_id: int, ticket: TicketUpdate):
             await db.commit()
 
         return await _get_ticket_detail(ticket_id, db)
+
+
+@router.delete("/{ticket_id}")
+async def delete_ticket(ticket_id: int):
+    """Delete a ticket and its steps/agents"""
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        check = await db.execute("SELECT id, status FROM tickets WHERE id = ?", (ticket_id,))
+        row = await check.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if row["status"] == "running":
+            raise HTTPException(status_code=400, detail="Cannot delete a running ticket. Cancel it first.")
+
+        # Delete agents, steps, then ticket
+        await db.execute(
+            "DELETE FROM step_agents WHERE step_id IN (SELECT id FROM ticket_steps WHERE ticket_id = ?)",
+            (ticket_id,)
+        )
+        await db.execute("DELETE FROM ticket_steps WHERE ticket_id = ?", (ticket_id,))
+        await db.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        await db.commit()
+
+    return {"message": "Ticket deleted", "ticket_id": ticket_id}
 
 
 @router.post("/{ticket_id}/auto-assign")

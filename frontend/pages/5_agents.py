@@ -1,5 +1,7 @@
 import streamlit as st
-from frontend.api_client import get, put
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from api_client import get, put
 
 st.set_page_config(page_title="Agent Management", page_icon="🤖", layout="wide")
 

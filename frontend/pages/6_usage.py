@@ -1,5 +1,7 @@
 import streamlit as st
-from frontend.api_client import get
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from api_client import get
 
 st.set_page_config(page_title="Usage & Cost Monitoring", page_icon="💰", layout="wide")
 

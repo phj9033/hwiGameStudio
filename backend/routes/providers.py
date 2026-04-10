@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from typing import List
 import backend.config
 from backend.database import get_db
+from backend.services.output_sanitizer import sanitize_output
 from backend.models.provider import (
     CLIProviderResponse,
     CLIProviderUpdate,
@@ -85,6 +86,51 @@ async def update_provider(provider_id: int, update: CLIProviderUpdate):
             api_key_env=row[3],
             enabled=bool(row[4])
         )
+
+
+@router.post("/{provider_id}/test")
+async def test_provider(provider_id: int):
+    """Test if a CLI provider command works by sending a simple prompt"""
+    from backend.services.cli_runner import CLIRunner
+
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        cursor = await db.execute(
+            "SELECT command FROM cli_providers WHERE id = ?",
+            (provider_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Provider not found")
+
+        command = row[0]
+
+    try:
+        import asyncio
+        runner = CLIRunner()
+        test_command = command
+        if "codex" in command.lower():
+            test_command = f"{command} --skip-git-repo-check"
+        result = await asyncio.wait_for(
+            runner.run(
+                command=test_command,
+                prompt='Respond with exactly: {"status":"ok"}',
+                work_dir="/tmp",
+                env={}
+            ),
+            timeout=30
+        )
+
+        if result["return_code"] == 0 and result["stdout"].strip():
+            return {"success": True, "message": sanitize_output(result["stdout"].strip()[:200])}
+        else:
+            error = result["stderr"].strip() or result["stdout"].strip() or f"Exit code: {result['return_code']}"
+            return {"success": False, "message": sanitize_output(error[:500])}
+    except asyncio.TimeoutError:
+        return {"success": False, "message": "Command timed out (30s)"}
+    except FileNotFoundError:
+        return {"success": False, "message": f"Command not found: {command}"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 @router.get("/rates", response_model=List[CostRateResponse])

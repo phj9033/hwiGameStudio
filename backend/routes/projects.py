@@ -3,6 +3,7 @@ from backend.models.project import ProjectCreate, ProjectUpdate, ProjectResponse
 from backend.models.common import PaginatedResponse
 from backend.database import get_db
 import backend.config
+import os
 from typing import Optional
 
 router = APIRouter(prefix="/api/projects", tags=["projects"])
@@ -75,6 +76,13 @@ async def create_project(project: ProjectCreate):
         )
         await db.commit()
         project_id = cursor.lastrowid
+
+        # Create project directory with git init
+        import subprocess
+        project_dir = os.path.join(backend.config.PROJECTS_DIR, project.name)
+        os.makedirs(project_dir, exist_ok=True)
+        if not os.path.isdir(os.path.join(project_dir, ".git")):
+            subprocess.run(["git", "init"], cwd=project_dir, capture_output=True)
 
         # Fetch and return the created project
         cursor = await db.execute(

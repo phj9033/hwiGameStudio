@@ -1,7 +1,16 @@
 import json
 import os
+import re
 from typing import List, Dict
 from backend.services.cli_runner import CLIRunner
+
+
+def extract_json(text: str) -> str:
+    """Extract JSON from text, stripping markdown code blocks if present."""
+    match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return text.strip()
 
 
 class TicketAnalyzer:
@@ -41,18 +50,29 @@ class TicketAnalyzer:
 
         # Call CLI runner with claude
         result = await self.cli_runner.run(
-            command="claude --print",
+            command="claude --dangerously-skip-permissions -p",
             prompt=prompt,
             work_dir=os.getcwd(),
             env={}
         )
 
-        # Parse JSON response
+        # Check CLI execution result
+        if result["return_code"] != 0:
+            raise ValueError(
+                f"CLI command failed (exit code {result['return_code']}). "
+                f"stdout: {result['stdout'][:500]} | "
+                f"stderr: {result['stderr'][:500]}"
+            )
+
+        # Parse JSON response (strip markdown code blocks if present)
         try:
-            response_data = json.loads(result["stdout"])
+            response_data = json.loads(extract_json(result["stdout"]))
             return response_data
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse AI response as JSON: {e}")
+            raise ValueError(
+                f"Failed to parse AI response as JSON: {e}. "
+                f"stdout: {result['stdout'][:500]}"
+            )
 
     async def analyze_diff(
         self,
@@ -92,15 +112,15 @@ class TicketAnalyzer:
 
         # Call CLI runner with claude
         result = await self.cli_runner.run(
-            command="claude --print",
+            command="claude --dangerously-skip-permissions -p",
             prompt=prompt,
             work_dir=os.getcwd(),
             env={}
         )
 
-        # Parse JSON response
+        # Parse JSON response (strip markdown code blocks if present)
         try:
-            response_data = json.loads(result["stdout"])
+            response_data = json.loads(extract_json(result["stdout"]))
             return response_data
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to parse AI response as JSON: {e}")

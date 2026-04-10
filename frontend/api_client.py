@@ -23,6 +23,11 @@ def patch(path: str, json: dict = None):
     resp.raise_for_status()
     return resp.json()
 
+def delete(path: str):
+    resp = requests.delete(f"{BACKEND_URL}{path}")
+    resp.raise_for_status()
+    return resp.json()
+
 def get_text(path: str):
     resp = requests.get(f"{BACKEND_URL}{path}")
     resp.raise_for_status()

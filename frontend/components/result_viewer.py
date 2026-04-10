@@ -1,5 +1,7 @@
 import streamlit as st
-from frontend.api_client import get, get_text
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from api_client import get, get_text
 
 
 def render_result_viewer(agent_run_id: int):

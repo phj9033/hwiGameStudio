@@ -36,6 +36,12 @@ build/
 .coverage
 htmlcov/
 
+# Runtime project data
+projects/
+
+# Archives
+docs.zip
+
 # OS
 .DS_Store
 Thumbs.db

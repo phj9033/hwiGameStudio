@@ -42,6 +42,33 @@ class CLIRunner:
             merged_env = os.environ.copy()
             merged_env.update(env)
 
+            auth_mode = os.environ.get("AUTH_MODE", "").lower()
+            if auth_mode == "cli":
+                # In CLI auth mode, remove API keys so CLIs use OAuth
+                merged_env.pop("ANTHROPIC_API_KEY", None)
+                merged_env.pop("OPENAI_API_KEY", None)
+            elif auth_mode in ("api", "bedrock"):
+                # In API/Bedrock mode, pass through relevant env vars
+                passthrough_keys = [
+                    "OPENAI_CODEX_API_KEY",
+                    "OPENAI_API_KEY",
+                ]
+                if auth_mode == "bedrock":
+                    passthrough_keys += [
+                        "CLAUDE_CODE_USE_BEDROCK",
+                        "ANTHROPIC_MODEL",
+                        "ANTHROPIC_BEDROCK_BASE_URL",
+                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+                        "AWS_REGION",
+                        "AWS_ACCESS_KEY_ID",
+                        "AWS_SECRET_ACCESS_KEY",
+                        "AWS_SESSION_TOKEN",
+                    ]
+                for key in passthrough_keys:
+                    val = os.environ.get(key)
+                    if val:
+                        merged_env.setdefault(key, val)
+
             # Execute command with prompt file via stdin
             import shlex
             cmd_parts = shlex.split(command)

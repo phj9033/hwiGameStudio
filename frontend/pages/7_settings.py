@@ -1,5 +1,7 @@
 import streamlit as st
-from frontend.api_client import get, put
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from api_client import get, put, post
 
 st.set_page_config(page_title="Settings", page_icon="⚙️", layout="wide")
 
@@ -19,19 +21,32 @@ try:
     else:
         for provider in providers:
             with st.expander(f"{'✅' if provider['enabled'] else '❌'} {provider['name']}", expanded=False):
+                command = st.text_input("Command", value=provider['command'], key=f"cmd_{provider['id']}")
+                enabled = st.checkbox("Enabled", value=provider['enabled'], key=f"enabled_{provider['id']}")
+
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.text_input("Command", value=provider['command'], key=f"cmd_{provider['id']}", disabled=True)
-                    st.text_input("API Key Env Var", value=provider['api_key_env'], key=f"env_{provider['id']}", disabled=True)
-                with col2:
-                    enabled = st.checkbox("Enabled", value=provider['enabled'], key=f"enabled_{provider['id']}")
-                    if st.button("Save Changes", key=f"save_{provider['id']}"):
+                    if st.button("Save Changes", key=f"save_{provider['id']}", type="primary"):
                         try:
-                            put(f"/api/providers/{provider['id']}", json={"enabled": enabled})
+                            update_data = {"enabled": enabled}
+                            if command != provider['command']:
+                                update_data["command"] = command
+                            put(f"/api/providers/{provider['id']}", json=update_data)
                             st.success("Provider updated successfully!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Failed: {e}")
+                with col2:
+                    if st.button("Test Connection", key=f"test_{provider['id']}"):
+                        with st.spinner("Testing..."):
+                            try:
+                                result = post(f"/api/providers/{provider['id']}/test")
+                                if result.get("success"):
+                                    st.success(f"OK: {result['message']}")
+                                else:
+                                    st.error(f"Failed: {result['message']}")
+                            except Exception as e:
+                                st.error(f"Test failed: {e}")
 except Exception as e:
     st.error(f"Failed to connect to backend: {e}")
 

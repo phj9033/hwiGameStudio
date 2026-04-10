@@ -83,18 +83,23 @@ CREATE TABLE IF NOT EXISTS documents (
 
 SEED_PROVIDERS = """
 INSERT OR IGNORE INTO cli_providers (name, command, api_key_env, enabled)
-VALUES ('claude', 'claude --print', 'ANTHROPIC_API_KEY', 1);
+VALUES ('claude', 'claude --dangerously-skip-permissions -p', 'ANTHROPIC_API_KEY', 1);
 
 INSERT OR IGNORE INTO cli_providers (name, command, api_key_env, enabled)
-VALUES ('codex', 'codex --quiet', 'OPENAI_API_KEY', 1);
+VALUES ('codex', 'codex exec --skip-git-repo-check --full-auto', 'OPENAI_API_KEY', 1);
+
+UPDATE cli_providers SET command = 'claude --dangerously-skip-permissions -p' WHERE name = 'claude';
+UPDATE cli_providers SET command = 'codex exec --skip-git-repo-check --full-auto' WHERE name = 'codex';
 """
 
 SEED_COST_RATES = """
-INSERT OR IGNORE INTO cost_rates (provider, model, input_rate, output_rate)
-VALUES ('claude', 'opus-4', 0.015, 0.075);
+INSERT INTO cost_rates (provider, model, input_rate, output_rate)
+SELECT 'claude', 'opus-4', 0.015, 0.075
+WHERE NOT EXISTS (SELECT 1 FROM cost_rates WHERE provider = 'claude' AND model = 'opus-4');
 
-INSERT OR IGNORE INTO cost_rates (provider, model, input_rate, output_rate)
-VALUES ('codex', 'codex', 0.003, 0.015);
+INSERT INTO cost_rates (provider, model, input_rate, output_rate)
+SELECT 'codex', 'codex', 0.003, 0.015
+WHERE NOT EXISTS (SELECT 1 FROM cost_rates WHERE provider = 'codex' AND model = 'codex');
 """
 
 
@@ -106,6 +111,21 @@ async def init_db(db_path: str):
         await db.executescript(SCHEMA)
         await db.executescript(SEED_PROVIDERS)
         await db.executescript(SEED_COST_RATES)
+        # Clean up duplicate cost_rates (keep lowest id per provider+model)
+        await db.execute("""
+            DELETE FROM cost_rates WHERE id NOT IN (
+                SELECT MIN(id) FROM cost_rates GROUP BY provider, model
+            )
+        """)
+        # Fix orphaned running states from previous container restart
+        await db.execute("""
+            UPDATE step_agents SET status='failed',
+                result_summary='Process lost (server restart)',
+                completed_at=CURRENT_TIMESTAMP
+            WHERE status='running'
+        """)
+        await db.execute("UPDATE ticket_steps SET status='failed' WHERE status='running'")
+        await db.execute("UPDATE tickets SET status='failed', updated_at=CURRENT_TIMESTAMP WHERE status='running'")
         await db.commit()
 
 

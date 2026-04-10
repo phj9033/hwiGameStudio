@@ -1,6 +1,8 @@
 import streamlit as st
-from frontend.api_client import get
-from datetime import datetime
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from api_client import get, post, delete
+from datetime import datetime, timezone
 
 st.set_page_config(page_title="Ticket Board", page_icon="📋", layout="wide")
 
@@ -100,29 +102,139 @@ if st.session_state.get("show_ticket_detail"):
     ticket_id = st.session_state.get("selected_ticket_id")
     try:
         ticket_detail = get(f"/api/tickets/{ticket_id}")
-        with st.expander(f"📄 Ticket #{ticket_id}: {ticket_detail['title']}", expanded=True):
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown(f"**Description:** {ticket_detail.get('description', 'No description')}")
-                st.markdown(f"**Status:** {ticket_detail['status']}")
-                st.markdown(f"**Source:** {ticket_detail['source']}")
-            with col2:
-                if st.button("Close", key="close_detail"):
-                    st.session_state.show_ticket_detail = False
-                    st.rerun()
+        st.divider()
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"### 📄 Ticket #{ticket_id}: {ticket_detail['title']}")
+            st.markdown(f"**Description:** {ticket_detail.get('description', 'No description')}")
+            st.markdown(f"**Status:** {ticket_detail['status']} | **Source:** {ticket_detail['source']}")
+        with col2:
+            if st.button("Close", key="close_detail"):
+                st.session_state.show_ticket_detail = False
+                st.rerun()
 
-            steps = ticket_detail.get("steps", [])
-            if steps:
-                st.markdown("### Pipeline Steps")
+        # Action buttons based on ticket status
+        ticket_status = ticket_detail["status"]
+        action_cols = st.columns(4)
+        with action_cols[0]:
+            if ticket_status in ("assigned", "open") and ticket_detail.get("steps"):
+                if st.button("▶️ Run", key="run_ticket", type="primary", use_container_width=True):
+                    try:
+                        post(f"/api/tickets/{ticket_id}/run")
+                        st.success("Ticket execution started!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
+        with action_cols[1]:
+            if ticket_status == "running":
+                if st.button("⏹️ Cancel", key="cancel_ticket", use_container_width=True):
+                    try:
+                        post(f"/api/tickets/{ticket_id}/cancel")
+                        st.success("Ticket cancelled!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
+        with action_cols[2]:
+            if ticket_status == "failed":
+                if st.button("🔄 Retry", key="retry_ticket", use_container_width=True):
+                    try:
+                        post(f"/api/tickets/{ticket_id}/retry")
+                        st.success("Retrying failed steps!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
+        with action_cols[3]:
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("🔄 Refresh", key="refresh_detail", use_container_width=True):
+                    st.rerun()
+            with col_b:
+                if ticket_status != "running":
+                    if st.button("🗑️ Delete", key="delete_ticket", use_container_width=True):
+                        try:
+                            delete(f"/api/tickets/{ticket_id}")
+                            st.success("Ticket deleted!")
+                            st.session_state.show_ticket_detail = False
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+
+        steps = ticket_detail.get("steps", [])
+        if steps:
+            # Progress bar & summary when running
+            total_steps = len(steps)
+            completed_steps = sum(1 for s in steps if s["status"] == "completed")
+
+            if ticket_status == "running":
+                st.markdown("#### Pipeline Progress")
+                progress_value = completed_steps / total_steps if total_steps > 0 else 0
+                st.progress(progress_value, text=f"Step {completed_steps + 1} / {total_steps} running...")
+
+                # Find currently running agent and show elapsed time
                 for step in steps:
-                    with st.expander(f"Step {step['step_order']} - {step['status']}", expanded=True):
-                        for agent in step.get("agents", []):
-                            st.markdown(f"**Agent:** {agent['agent_name']} | **Provider:** {agent['cli_provider']} | **Status:** {agent['status']}")
-                            st.markdown(f"**Instruction:** {agent.get('instruction', 'No instruction')}")
-                            if agent.get("result_summary"):
+                    for agent in step.get("agents", []):
+                        if agent["status"] == "running" and agent.get("started_at"):
+                            try:
+                                started = datetime.fromisoformat(agent["started_at"])
+                                now = datetime.now(timezone.utc) if started.tzinfo else datetime.now()
+                                elapsed = now - started
+                                mins, secs = divmod(int(elapsed.total_seconds()), 60)
+                                st.info(
+                                    f"▶️ **{agent['agent_name']}** running for "
+                                    f"**{mins}m {secs}s** (provider: {agent['cli_provider']})"
+                                )
+                            except Exception:
+                                st.info(f"▶️ **{agent['agent_name']}** running...")
+            else:
+                st.markdown("#### Pipeline Steps")
+
+            for step in steps:
+                status_icon = {"pending": "⏳", "running": "▶️", "completed": "✅", "failed": "❌", "cancelled": "⏹️"}.get(step["status"], "❓")
+                with st.expander(f"{status_icon} Step {step['step_order']} - {step['status']}", expanded=(step["status"] in ("running", "failed"))):
+                    for agent in step.get("agents", []):
+                        agent_icon = {"pending": "⏳", "running": "▶️", "completed": "✅", "failed": "❌", "cancelled": "⏹️"}.get(agent["status"], "❓")
+                        st.markdown(f"**{agent_icon} {agent['agent_name']}** | Provider: {agent['cli_provider']} | Status: {agent['status']}")
+
+                        # Show elapsed time for running agent
+                        if agent["status"] == "running" and agent.get("started_at"):
+                            try:
+                                started = datetime.fromisoformat(agent["started_at"])
+                                now = datetime.now(timezone.utc) if started.tzinfo else datetime.now()
+                                elapsed = now - started
+                                mins, secs = divmod(int(elapsed.total_seconds()), 60)
+                                st.caption(f"⏱️ Elapsed: {mins}m {secs}s")
+                            except Exception:
+                                pass
+
+                        # Show duration for completed agent
+                        if agent["status"] == "completed" and agent.get("started_at") and agent.get("completed_at"):
+                            try:
+                                started = datetime.fromisoformat(agent["started_at"])
+                                completed = datetime.fromisoformat(agent["completed_at"])
+                                duration = completed - started
+                                mins, secs = divmod(int(duration.total_seconds()), 60)
+                                st.caption(f"⏱️ Duration: {mins}m {secs}s")
+                            except Exception:
+                                pass
+
+                        st.markdown(f"**Instruction:** {agent.get('instruction', 'No instruction')}")
+                        if agent.get("result_summary"):
+                            if agent["status"] == "failed":
+                                st.error(f"**Error:** {agent['result_summary']}")
+                            else:
                                 st.markdown(f"**Result:** {agent['result_summary']}")
-                            if agent.get("estimated_cost"):
-                                st.markdown(f"**Cost:** ${agent['estimated_cost']:.4f}")
-                            st.markdown("---")
+                        if agent.get("input_tokens") or agent.get("output_tokens"):
+                            st.caption(f"Tokens: {agent.get('input_tokens', 0):,} in / {agent.get('output_tokens', 0):,} out")
+                        if agent.get("estimated_cost"):
+                            st.caption(f"Cost: ${agent['estimated_cost']:.4f}")
+                        st.markdown("---")
+        elif ticket_status in ("open", "assigned"):
+            st.info("No pipeline steps defined. This ticket has no executable steps.")
+
+        # Auto-refresh when running
+        if ticket_status == "running":
+            import time
+            time.sleep(10)
+            st.rerun()
     except Exception as e:
         st.error(f"Failed to fetch ticket details: {e}")
