@@ -11,8 +11,8 @@ services:
       - ./data:/app/data
       - ./agents:/app/agents
       - ./projects:/app/projects
-      # Codex config (gateway URL, model, provider settings)
-      - ~/.codex/config.toml:/home/appuser/.codex/config.toml:ro
+      # Codex config: host config mounted read-only, entrypoint copies to writable location
+      - ~/.codex/config.toml:/home/appuser/.codex-host/config.toml:ro
       # Only needed for AUTH_MODE=cli (OAuth). Remove for api/bedrock mode.
       # - ~/.claude:/root/.claude:ro
       # - ~/.claude.json:/root/.claude.json:ro
@@ -33,3 +33,4 @@ services:
       - BACKEND_URL=http://backend:8000
     depends_on:
       - backend
+

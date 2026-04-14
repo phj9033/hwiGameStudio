@@ -108,7 +108,7 @@ async def test_provider(provider_id: int):
         import asyncio
         runner = CLIRunner()
         test_command = command
-        if "codex" in command.lower():
+        if "codex" in command.lower() and "--skip-git-repo-check" not in command:
             test_command = f"{command} --skip-git-repo-check"
         result = await asyncio.wait_for(
             runner.run(

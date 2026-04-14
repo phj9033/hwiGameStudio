@@ -76,7 +76,7 @@ if mode == "Manual Input":
         st.markdown("### Pipeline Configuration")
         st.caption("Define the steps and agents for this ticket")
 
-        num_steps = st.number_input("Number of Steps", min_value=0, max_value=10, value=0)
+        num_steps = st.number_input("Number of Steps", min_value=1, max_value=10, value=1)
 
         steps = []
         for step_idx in range(num_steps):
@@ -101,6 +101,8 @@ if mode == "Manual Input":
     if submitted:
         if not title:
             st.error("Title is required")
+        elif not steps:
+            st.error("At least one step with an agent is required")
         else:
             if steps:
                 valid, error_msg = validate_pipeline(steps)

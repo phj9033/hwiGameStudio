@@ -179,6 +179,14 @@ class PipelineExecutor:
                 if not provider:
                     raise ValueError(f"CLI provider {agent['cli_provider']} not found")
 
+                # Apply model override from agent frontmatter
+                command = provider["command"]
+                model_override = self.prompt_builder.get_agent_model(
+                    agent["agent_name"], agent["cli_provider"]
+                )
+                if model_override:
+                    command = f"{command} --model {model_override}"
+
                 # Prepare environment variables
                 env = {}
                 api_key_env = provider["api_key_env"]
@@ -187,7 +195,7 @@ class PipelineExecutor:
 
                 # Run CLI
                 result = await self.cli_runner.run(
-                    command=provider["command"],
+                    command=command,
                     prompt=prompt,
                     work_dir=work_dir,
                     env=env

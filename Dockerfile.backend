@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y curl nodejs npm git gosu && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl nodejs npm git gosu bubblewrap && rm -rf /var/lib/apt/lists/*
 RUN npm install -g @anthropic-ai/claude-code@latest
 RUN npm install -g @openai/codex@latest
 
