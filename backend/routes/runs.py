@@ -2,13 +2,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import PlainTextResponse
 import backend.config
 from backend.database import get_db
-from backend.models.ticket import StepAgentResponse
+from backend.models.session import SessionResponse
 import os
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 
-@router.get("/{agent_run_id}", response_model=StepAgentResponse)
+@router.get("/{agent_run_id}", response_model=SessionResponse)
 async def get_agent_run(agent_run_id: int):
     """Get step_agent detail by ID"""
     async with get_db(backend.config.DATABASE_PATH) as db:
@@ -17,7 +17,7 @@ async def get_agent_run(agent_run_id: int):
             SELECT id, agent_name, cli_provider, instruction, context_refs, status,
                    input_tokens, output_tokens, estimated_cost, result_summary,
                    result_path, started_at, completed_at, retry_count
-            FROM step_agents
+            FROM agent_sessions
             WHERE id = ?
             """,
             (agent_run_id,)
@@ -27,7 +27,7 @@ async def get_agent_run(agent_run_id: int):
         if not row:
             raise HTTPException(status_code=404, detail="Agent run not found")
 
-        return StepAgentResponse(
+        return SessionResponse(
             id=row[0],
             agent_name=row[1],
             cli_provider=row[2],
@@ -50,7 +50,7 @@ async def get_agent_result_file(agent_run_id: int):
     """Read and return result file content from result_path"""
     async with get_db(backend.config.DATABASE_PATH) as db:
         cursor = await db.execute(
-            "SELECT result_path FROM step_agents WHERE id = ?",
+            "SELECT result_path FROM agent_sessions WHERE id = ?",
             (agent_run_id,)
         )
         row = await cursor.fetchone()

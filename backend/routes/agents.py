@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 from backend.database import get_db
 from backend.models.common import PaginatedResponse
-from backend.models.ticket import StepAgentResponse
+from backend.models.session import SessionResponse
 import backend.config
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
@@ -78,28 +78,28 @@ async def update_agent(name: str, update: AgentContentUpdate):
     return AgentContent(name=name, content=update.content)
 
 
-@router.get("/{name}/runs", response_model=PaginatedResponse[StepAgentResponse])
+@router.get("/{name}/runs", response_model=PaginatedResponse[SessionResponse])
 async def get_agent_runs(name: str, page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=100)):
     async with get_db() as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM step_agents WHERE agent_name = ?", (name,))
+        cursor = await db.execute("SELECT COUNT(*) FROM agent_sessions WHERE agent_name = ?", (name,))
         total = (await cursor.fetchone())[0]
         offset = (page - 1) * per_page
         cursor = await db.execute(
-            "SELECT * FROM step_agents WHERE agent_name = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            "SELECT * FROM agent_sessions WHERE agent_name = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
             (name, per_page, offset)
         )
         rows = await cursor.fetchall()
-    items = [StepAgentResponse(**dict(r)) for r in rows]
+    items = [SessionResponse(**dict(r)) for r in rows]
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
 
 
-@router.put("/runs/{agent_run_id}", response_model=StepAgentResponse)
+@router.put("/runs/{agent_run_id}", response_model=SessionResponse)
 async def update_agent_run(agent_run_id: int, update: AgentRunUpdate):
     """Update agent run data (tokens, cost, status, etc)"""
     async with get_db(backend.config.DATABASE_PATH) as db:
         # Check if agent run exists
         cursor = await db.execute(
-            "SELECT id FROM step_agents WHERE id = ?",
+            "SELECT id FROM agent_sessions WHERE id = ?",
             (agent_run_id,)
         )
         row = await cursor.fetchone()
@@ -137,7 +137,7 @@ async def update_agent_run(agent_run_id: int, update: AgentRunUpdate):
         if updates:
             params.append(agent_run_id)
             await db.execute(
-                f"UPDATE step_agents SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE agent_sessions SET {', '.join(updates)} WHERE id = ?",
                 params
             )
             await db.commit()
@@ -148,14 +148,14 @@ async def update_agent_run(agent_run_id: int, update: AgentRunUpdate):
             SELECT id, agent_name, cli_provider, instruction, context_refs, status,
                    input_tokens, output_tokens, estimated_cost, result_summary,
                    result_path, started_at, completed_at, retry_count
-            FROM step_agents
+            FROM agent_sessions
             WHERE id = ?
             """,
             (agent_run_id,)
         )
         row = await cursor.fetchone()
 
-        return StepAgentResponse(
+        return SessionResponse(
             id=row[0],
             agent_name=row[1],
             cli_provider=row[2],

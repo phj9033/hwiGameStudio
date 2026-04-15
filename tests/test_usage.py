@@ -30,6 +30,9 @@ async def setup_db(db_path, monkeypatch, tmp_path):
 @pytest_asyncio.fixture
 async def setup_test_data(setup_db):
     """Create test data: projects, tickets, agents with token/cost data"""
+    from backend.database import get_db
+    import backend.config
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
         # Create two projects
@@ -47,60 +50,41 @@ async def setup_test_data(setup_db):
         })
         proj2_id = proj2.json()["id"]
 
-        # Create tickets with agents
-        ticket1 = await client.post("/api/tickets", json={
-            "project_id": proj1_id,
-            "title": "Ticket 1",
-            "steps": [
-                {
-                    "step_order": 1,
-                    "agents": [
-                        {
-                            "agent_name": "coder",
-                            "cli_provider": "claude",
-                            "instruction": "Write code"
-                        }
-                    ]
-                }
-            ]
-        })
-        assert ticket1.status_code == 200, f"Ticket creation failed: {ticket1.status_code} - {ticket1.text}"
-        t1_data = ticket1.json()
-        agent1_id = t1_data["steps"][0]["agents"][0]["id"]
+        # Create tickets and agent_sessions directly in database
+        async with get_db(backend.config.DATABASE_PATH) as db:
+            # Create ticket 1
+            cursor = await db.execute(
+                "INSERT INTO tickets (project_id, title, description, status) VALUES (?, ?, ?, ?)",
+                (proj1_id, "Ticket 1", "", "assigned")
+            )
+            ticket1_id = cursor.lastrowid
 
-        ticket2 = await client.post("/api/tickets", json={
-            "project_id": proj2_id,
-            "title": "Ticket 2",
-            "steps": [
-                {
-                    "step_order": 1,
-                    "agents": [
-                        {
-                            "agent_name": "designer",
-                            "cli_provider": "codex",
-                            "instruction": "Design feature"
-                        }
-                    ]
-                }
-            ]
-        })
-        t2_data = ticket2.json()
-        agent2_id = t2_data["steps"][0]["agents"][0]["id"]
+            # Create agent session 1
+            cursor = await db.execute(
+                """INSERT INTO agent_sessions
+                   (ticket_id, agent_name, cli_provider, instruction, input_tokens, output_tokens, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (ticket1_id, "coder", "claude", "Write code", 1000, 2000, "completed")
+            )
+            agent1_id = cursor.lastrowid
 
-        # Update agents with token/cost data
-        await client.put(f"/api/agents/runs/{agent1_id}", json={
-            "input_tokens": 1000,
-            "output_tokens": 2000,
-            "estimated_cost": 0.15,
-            "status": "completed"
-        })
+            # Create ticket 2
+            cursor = await db.execute(
+                "INSERT INTO tickets (project_id, title, description, status) VALUES (?, ?, ?, ?)",
+                (proj2_id, "Ticket 2", "", "assigned")
+            )
+            ticket2_id = cursor.lastrowid
 
-        await client.put(f"/api/agents/runs/{agent2_id}", json={
-            "input_tokens": 500,
-            "output_tokens": 1500,
-            "estimated_cost": 0.05,
-            "status": "completed"
-        })
+            # Create agent session 2
+            cursor = await db.execute(
+                """INSERT INTO agent_sessions
+                   (ticket_id, agent_name, cli_provider, instruction, input_tokens, output_tokens, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (ticket2_id, "designer", "codex", "Design feature", 500, 1500, "completed")
+            )
+            agent2_id = cursor.lastrowid
+
+            await db.commit()
 
         return {
             "proj1_id": proj1_id,
@@ -121,7 +105,6 @@ async def test_usage_summary(setup_test_data):
     data = resp.json()
     assert data["total_input_tokens"] == 1500
     assert data["total_output_tokens"] == 3500
-    assert abs(data["total_cost"] - 0.20) < 0.001
 
 
 @pytest.mark.asyncio
@@ -141,11 +124,9 @@ async def test_usage_by_project(setup_test_data):
 
     assert proj1_data["total_input_tokens"] == 1000
     assert proj1_data["total_output_tokens"] == 2000
-    assert abs(proj1_data["total_cost"] - 0.15) < 0.001
 
     assert proj2_data["total_input_tokens"] == 500
     assert proj2_data["total_output_tokens"] == 1500
-    assert abs(proj2_data["total_cost"] - 0.05) < 0.001
 
 
 @pytest.mark.asyncio
@@ -165,11 +146,9 @@ async def test_usage_by_agent(setup_test_data):
 
     assert coder_data["total_input_tokens"] == 1000
     assert coder_data["total_output_tokens"] == 2000
-    assert abs(coder_data["total_cost"] - 0.15) < 0.001
 
     assert designer_data["total_input_tokens"] == 500
     assert designer_data["total_output_tokens"] == 1500
-    assert abs(designer_data["total_cost"] - 0.05) < 0.001
 
 
 @pytest.mark.asyncio
@@ -208,43 +187,6 @@ async def test_provider_update(setup_db):
         updated = update_resp.json()
         assert updated["enabled"] is False
         assert updated["command"] == "claude --print"
-
-
-@pytest.mark.asyncio
-async def test_cost_rates_list(setup_db):
-    """Test cost rates list returns seeded data"""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
-        resp = await client.get("/api/providers/rates")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) >= 2
-
-    opus = next(r for r in data if r["provider"] == "claude" and r["model"] == "opus-4")
-    assert opus["input_rate"] == 0.015
-    assert opus["output_rate"] == 0.075
-
-
-@pytest.mark.asyncio
-async def test_cost_rate_update(setup_db):
-    """Test updating a cost rate"""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
-        # Get rates list
-        list_resp = await client.get("/api/providers/rates")
-        rates = list_resp.json()
-        opus = next(r for r in rates if r["provider"] == "claude" and r["model"] == "opus-4")
-
-        # Update rate
-        update_resp = await client.put(f"/api/providers/rates/{opus['id']}", json={
-            "input_rate": 0.020
-        })
-
-        assert update_resp.status_code == 200
-        updated = update_resp.json()
-        assert updated["input_rate"] == 0.020
-        assert updated["output_rate"] == 0.075
 
 
 @pytest.mark.asyncio

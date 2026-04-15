@@ -1,20 +1,20 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from backend.models.ticket import (
     TicketCreate,
     TicketUpdate,
     TicketResponse,
     TicketSummary,
-    StepResponse,
-    StepAgentResponse,
 )
+from backend.models.session import SessionResponse
 from backend.models.common import PaginatedResponse
 from backend.database import get_db
+from backend.services.dependency_graph import validate_dependency_graph, CyclicDependencyError
 import backend.config
 import json
 import asyncio
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
@@ -36,7 +36,7 @@ class DecomposeRequest(BaseModel):
 
 
 async def _get_ticket_detail(ticket_id: int, db) -> TicketResponse:
-    """Helper to fetch ticket with full step and agent detail"""
+    """Helper to fetch ticket with full session detail"""
     # Fetch ticket
     ticket_row = await db.execute(
         "SELECT * FROM tickets WHERE id = ?", (ticket_id,)
@@ -45,50 +45,34 @@ async def _get_ticket_detail(ticket_id: int, db) -> TicketResponse:
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
 
-    # Fetch steps
-    steps_rows = await db.execute(
-        "SELECT * FROM ticket_steps WHERE ticket_id = ? ORDER BY step_order",
+    # Fetch sessions
+    sessions_rows = await db.execute(
+        "SELECT * FROM agent_sessions WHERE ticket_id = ? ORDER BY id",
         (ticket_id,)
     )
-    steps_data = await steps_rows.fetchall()
+    sessions_data = await sessions_rows.fetchall()
 
-    steps = []
-    for step_row in steps_data:
-        # Fetch agents for this step
-        agents_rows = await db.execute(
-            "SELECT * FROM step_agents WHERE step_id = ?",
-            (step_row["id"],)
+    sessions = [
+        SessionResponse(
+            id=row["id"],
+            ticket_id=row["ticket_id"],
+            agent_name=row["agent_name"],
+            cli_provider=row["cli_provider"],
+            instruction=row["instruction"],
+            depends_on=json.loads(row["depends_on"]) if row["depends_on"] else [],
+            produces=json.loads(row["produces"]) if row["produces"] else [],
+            status=row["status"],
+            error_message=row["error_message"],
+            input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"],
+            estimated_cost=row["estimated_cost"],
+            session_log_path=row["session_log_path"],
+            started_at=row["started_at"],
+            completed_at=row["completed_at"],
+            retry_count=row["retry_count"],
         )
-        agents_data = await agents_rows.fetchall()
-
-        agents = [
-            StepAgentResponse(
-                id=agent["id"],
-                agent_name=agent["agent_name"],
-                cli_provider=agent["cli_provider"],
-                instruction=agent["instruction"],
-                context_refs=agent["context_refs"],
-                status=agent["status"],
-                input_tokens=agent["input_tokens"],
-                output_tokens=agent["output_tokens"],
-                estimated_cost=agent["estimated_cost"],
-                result_summary=agent["result_summary"],
-                result_path=agent["result_path"],
-                started_at=agent["started_at"],
-                completed_at=agent["completed_at"],
-                retry_count=agent["retry_count"],
-            )
-            for agent in agents_data
-        ]
-
-        steps.append(
-            StepResponse(
-                id=step_row["id"],
-                step_order=step_row["step_order"],
-                status=step_row["status"],
-                agents=agents,
-            )
-        )
+        for row in sessions_data
+    ]
 
     return TicketResponse(
         id=ticket["id"],
@@ -100,7 +84,7 @@ async def _get_ticket_detail(ticket_id: int, db) -> TicketResponse:
         created_by=ticket["created_by"],
         created_at=ticket["created_at"],
         updated_at=ticket["updated_at"],
-        steps=steps,
+        sessions=sessions,
     )
 
 
@@ -200,10 +184,20 @@ async def get_decompose_status(job_id: str):
 
 @router.post("/", response_model=TicketResponse)
 async def create_ticket(ticket: TicketCreate):
-    """Create a ticket with nested steps and agents"""
+    """Create a ticket with optional agent sessions"""
+    # Validate dependency graph if sessions are provided
+    if ticket.sessions:
+        session_dicts = [s.model_dump() for s in ticket.sessions]
+        try:
+            validate_dependency_graph(session_dicts)
+        except CyclicDependencyError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     async with get_db(backend.config.DATABASE_PATH) as db:
-        # Determine status based on whether steps are provided
-        status = "assigned" if ticket.steps else "open"
+        # Determine status based on whether sessions are provided
+        status = "assigned" if ticket.sessions else "open"
 
         # Insert ticket
         cursor = await db.execute(
@@ -220,31 +214,24 @@ async def create_ticket(ticket: TicketCreate):
         )
         ticket_id = cursor.lastrowid
 
-        # Insert steps and agents
-        for step in ticket.steps:
-            step_cursor = await db.execute(
-                """INSERT INTO ticket_steps (ticket_id, step_order, status)
-                   VALUES (?, ?, ?)""",
-                (ticket_id, step.step_order, "pending")
-            )
-            step_id = step_cursor.lastrowid
-
-            # Insert agents for this step
-            for agent in step.agents:
-                context_refs_json = json.dumps(agent.context_refs)
-                await db.execute(
-                    """INSERT INTO step_agents
-                       (step_id, agent_name, cli_provider, instruction, context_refs, status)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        step_id,
-                        agent.agent_name,
-                        agent.cli_provider,
-                        agent.instruction,
-                        context_refs_json,
-                        "pending",
-                    )
+        # Insert sessions
+        for session in ticket.sessions:
+            depends_on_json = json.dumps(session.depends_on)
+            produces_json = json.dumps(session.produces)
+            await db.execute(
+                """INSERT INTO agent_sessions
+                   (ticket_id, agent_name, cli_provider, instruction, depends_on, produces, status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    ticket_id,
+                    session.agent_name,
+                    session.cli_provider,
+                    session.instruction,
+                    depends_on_json,
+                    produces_json,
+                    "pending",
                 )
+            )
 
         await db.commit()
 
@@ -254,7 +241,7 @@ async def create_ticket(ticket: TicketCreate):
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
 async def get_ticket(ticket_id: int):
-    """Get ticket with full step and agent detail"""
+    """Get ticket with full session detail"""
     async with get_db(backend.config.DATABASE_PATH) as db:
         return await _get_ticket_detail(ticket_id, db)
 
@@ -292,7 +279,7 @@ async def update_ticket(ticket_id: int, ticket: TicketUpdate):
 
 @router.delete("/{ticket_id}")
 async def delete_ticket(ticket_id: int):
-    """Delete a ticket and its steps/agents"""
+    """Delete a ticket and its sessions"""
     async with get_db(backend.config.DATABASE_PATH) as db:
         check = await db.execute("SELECT id, status FROM tickets WHERE id = ?", (ticket_id,))
         row = await check.fetchone()
@@ -301,12 +288,8 @@ async def delete_ticket(ticket_id: int):
         if row["status"] == "running":
             raise HTTPException(status_code=400, detail="Cannot delete a running ticket. Cancel it first.")
 
-        # Delete agents, steps, then ticket
-        await db.execute(
-            "DELETE FROM step_agents WHERE step_id IN (SELECT id FROM ticket_steps WHERE ticket_id = ?)",
-            (ticket_id,)
-        )
-        await db.execute("DELETE FROM ticket_steps WHERE ticket_id = ?", (ticket_id,))
+        # Delete sessions, then ticket
+        await db.execute("DELETE FROM agent_sessions WHERE ticket_id = ?", (ticket_id,))
         await db.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
         await db.commit()
 
@@ -411,7 +394,7 @@ async def cancel_ticket(ticket_id: int):
                 detail=f"Cannot cancel ticket in status: {row['status']}"
             )
 
-    # Cancel the ticket
+    # Delegate to SessionExecutor
     from backend.services.session_executor import SessionExecutor
     executor = SessionExecutor()
     await executor.cancel_ticket(ticket_id)
@@ -420,8 +403,12 @@ async def cancel_ticket(ticket_id: int):
 
 
 @router.post("/{ticket_id}/retry")
-async def retry_ticket(ticket_id: int, background_tasks: BackgroundTasks):
-    """Retry failed ticket from the failed step"""
+async def retry_ticket(
+    ticket_id: int,
+    background_tasks: BackgroundTasks,
+    session_id: Optional[int] = Query(None, description="Retry a specific session"),
+):
+    """Retry failed ticket. Optionally retry a specific session."""
     async with get_db(backend.config.DATABASE_PATH) as db:
         # Validate ticket exists and is in failed state
         check = await db.execute("SELECT status FROM tickets WHERE id = ?", (ticket_id,))
@@ -434,9 +421,14 @@ async def retry_ticket(ticket_id: int, background_tasks: BackgroundTasks):
                 detail=f"Cannot retry ticket in status: {row['status']}"
             )
 
-    # Launch retry in background
     from backend.services.session_executor import SessionExecutor
     executor = SessionExecutor()
-    background_tasks.add_task(executor.execute_ticket, ticket_id)
 
-    return {"message": "Ticket retry started", "ticket_id": ticket_id}
+    if session_id is not None:
+        # Retry a specific session
+        background_tasks.add_task(executor.retry_session, session_id)
+        return {"message": "Session retry started", "ticket_id": ticket_id, "session_id": session_id}
+    else:
+        # Retry the whole ticket
+        background_tasks.add_task(executor.execute_ticket, ticket_id)
+        return {"message": "Ticket retry started", "ticket_id": ticket_id}
