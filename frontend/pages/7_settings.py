@@ -49,32 +49,3 @@ try:
                                 st.error(f"Test failed: {e}")
 except Exception as e:
     st.error(f"Failed to connect to backend: {e}")
-
-st.divider()
-
-# Cost Rates Section
-st.subheader("Cost Rates")
-
-try:
-    rates = get("/api/providers/rates")
-
-    if not rates:
-        st.info("No cost rates configured.")
-    else:
-        for rate in rates:
-            with st.expander(f"💰 {rate['provider']} - {rate['model']}", expanded=False):
-                st.caption(f"Last updated: {rate['updated_at']}")
-                col1, col2 = st.columns(2)
-                with col1:
-                    input_rate = st.number_input("Input Rate (per 1K tokens)", value=rate['input_rate'], min_value=0.0, step=0.001, format="%.4f", key=f"input_rate_{rate['id']}")
-                with col2:
-                    output_rate = st.number_input("Output Rate (per 1K tokens)", value=rate['output_rate'], min_value=0.0, step=0.001, format="%.4f", key=f"output_rate_{rate['id']}")
-                if st.button("Save Changes", key=f"save_rate_{rate['id']}"):
-                    try:
-                        put(f"/api/providers/rates/{rate['id']}", json={"input_rate": input_rate, "output_rate": output_rate})
-                        st.success("Cost rate updated successfully!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed: {e}")
-except Exception as e:
-    st.error(f"Failed to connect to backend: {e}")

@@ -6,8 +6,6 @@ from backend.services.output_sanitizer import sanitize_output
 from backend.models.provider import (
     CLIProviderResponse,
     CLIProviderUpdate,
-    CostRateResponse,
-    CostRateUpdate
 )
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
@@ -133,76 +131,3 @@ async def test_provider(provider_id: int):
         return {"success": False, "message": str(e)}
 
 
-@router.get("/rates", response_model=List[CostRateResponse])
-async def list_cost_rates():
-    """List all cost rates"""
-    async with get_db(backend.config.DATABASE_PATH) as db:
-        cursor = await db.execute(
-            """
-            SELECT id, provider, model, input_rate, output_rate, updated_at
-            FROM cost_rates
-            ORDER BY provider, model
-            """
-        )
-        rows = await cursor.fetchall()
-
-        return [
-            CostRateResponse(
-                id=row[0],
-                provider=row[1],
-                model=row[2],
-                input_rate=row[3],
-                output_rate=row[4],
-                updated_at=row[5]
-            )
-            for row in rows
-        ]
-
-
-@router.put("/rates/{rate_id}", response_model=CostRateResponse)
-async def update_cost_rate(rate_id: int, update: CostRateUpdate):
-    """Update cost rate"""
-    async with get_db(backend.config.DATABASE_PATH) as db:
-        # Check if rate exists
-        cursor = await db.execute(
-            "SELECT id FROM cost_rates WHERE id = ?",
-            (rate_id,)
-        )
-        row = await cursor.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Cost rate not found")
-
-        # Build update query
-        updates = []
-        params = []
-        if update.input_rate is not None:
-            updates.append("input_rate = ?")
-            params.append(update.input_rate)
-        if update.output_rate is not None:
-            updates.append("output_rate = ?")
-            params.append(update.output_rate)
-
-        if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-            params.append(rate_id)
-            await db.execute(
-                f"UPDATE cost_rates SET {', '.join(updates)} WHERE id = ?",
-                params
-            )
-            await db.commit()
-
-        # Fetch updated record
-        cursor = await db.execute(
-            "SELECT id, provider, model, input_rate, output_rate, updated_at FROM cost_rates WHERE id = ?",
-            (rate_id,)
-        )
-        row = await cursor.fetchone()
-
-        return CostRateResponse(
-            id=row[0],
-            provider=row[1],
-            model=row[2],
-            input_rate=row[3],
-            output_rate=row[4],
-            updated_at=row[5]
-        )
