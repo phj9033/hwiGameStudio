@@ -13,6 +13,7 @@ import backend.config
 import json
 import asyncio
 import uuid
+import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
@@ -432,3 +433,102 @@ async def retry_ticket(
         # Retry the whole ticket
         background_tasks.add_task(executor.execute_ticket, ticket_id)
         return {"message": "Ticket retry started", "ticket_id": ticket_id}
+
+
+@router.get("/{ticket_id}/workspace")
+async def get_workspace(ticket_id: int):
+    """List files in ticket workspace directory"""
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        # Find project for ticket
+        ticket_row = await db.execute(
+            """SELECT t.id, p.name as project_name
+               FROM tickets t
+               JOIN projects p ON t.project_id = p.id
+               WHERE t.id = ?""",
+            (ticket_id,)
+        )
+        ticket = await ticket_row.fetchone()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        project_name = ticket["project_name"]
+        workspace_path = os.path.join(
+            backend.config.PROJECTS_DIR,
+            project_name,
+            "workspace",
+            f"ticket_{ticket_id}"
+        )
+
+        # Return empty list if directory doesn't exist
+        if not os.path.exists(workspace_path):
+            return []
+
+        # List files with metadata
+        files = []
+        try:
+            for filename in os.listdir(workspace_path):
+                file_path = os.path.join(workspace_path, filename)
+                if os.path.isfile(file_path):
+                    stat = os.stat(file_path)
+                    files.append({
+                        "filename": filename,
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                        "is_writing": False  # TODO: Track actual writing status if needed
+                    })
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error listing workspace: {str(e)}")
+
+        return files
+
+
+@router.get("/{ticket_id}/workspace/{filename:path}")
+async def get_workspace_file(ticket_id: int, filename: str):
+    """Read a file from ticket workspace"""
+    async with get_db(backend.config.DATABASE_PATH) as db:
+        # Find project for ticket
+        ticket_row = await db.execute(
+            """SELECT t.id, p.name as project_name
+               FROM tickets t
+               JOIN projects p ON t.project_id = p.id
+               WHERE t.id = ?""",
+            (ticket_id,)
+        )
+        ticket = await ticket_row.fetchone()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        project_name = ticket["project_name"]
+        file_path = os.path.join(
+            backend.config.PROJECTS_DIR,
+            project_name,
+            "workspace",
+            f"ticket_{ticket_id}",
+            filename
+        )
+
+        # Security check: ensure path is within workspace
+        workspace_dir = os.path.join(
+            backend.config.PROJECTS_DIR,
+            project_name,
+            "workspace",
+            f"ticket_{ticket_id}"
+        )
+        abs_file_path = os.path.abspath(file_path)
+        abs_workspace_dir = os.path.abspath(workspace_dir)
+        if not abs_file_path.startswith(abs_workspace_dir):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Read and return file content
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return {"content": content, "filename": filename}
+        except UnicodeDecodeError:
+            # Handle binary files
+            raise HTTPException(status_code=400, detail="Cannot read binary file")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
