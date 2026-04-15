@@ -27,39 +27,25 @@ CREATE TABLE IF NOT EXISTS tickets (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS ticket_steps (
+CREATE TABLE IF NOT EXISTS agent_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id INTEGER NOT NULL REFERENCES tickets(id),
-    step_order INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending'
-);
-
-CREATE TABLE IF NOT EXISTS step_agents (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    step_id INTEGER NOT NULL REFERENCES ticket_steps(id),
     agent_name TEXT NOT NULL,
     cli_provider TEXT NOT NULL DEFAULT 'claude',
-    instruction TEXT DEFAULT '',
-    context_refs TEXT DEFAULT '[]',
+    instruction TEXT NOT NULL,
+    depends_on TEXT DEFAULT '[]',
+    produces TEXT DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending',
-    input_tokens INTEGER,
-    output_tokens INTEGER,
-    estimated_cost REAL,
-    result_summary TEXT,
-    result_path TEXT,
-    started_at DATETIME,
-    completed_at DATETIME,
+    error_message TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    estimated_cost REAL DEFAULT 0,
+    session_log_path TEXT,
+    pid INTEGER,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
     retry_count INTEGER DEFAULT 0,
-    pid INTEGER
-);
-
-CREATE TABLE IF NOT EXISTS cost_rates (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    input_rate REAL NOT NULL,
-    output_rate REAL NOT NULL,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS cli_providers (
@@ -92,17 +78,6 @@ UPDATE cli_providers SET command = 'claude --dangerously-skip-permissions -p' WH
 UPDATE cli_providers SET command = 'codex exec --skip-git-repo-check --full-auto' WHERE name = 'codex';
 """
 
-SEED_COST_RATES = """
-INSERT INTO cost_rates (provider, model, input_rate, output_rate)
-SELECT 'claude', 'opus-4', 0.015, 0.075
-WHERE NOT EXISTS (SELECT 1 FROM cost_rates WHERE provider = 'claude' AND model = 'opus-4');
-
-INSERT INTO cost_rates (provider, model, input_rate, output_rate)
-SELECT 'codex', 'codex', 0.003, 0.015
-WHERE NOT EXISTS (SELECT 1 FROM cost_rates WHERE provider = 'codex' AND model = 'codex');
-"""
-
-
 async def init_db(db_path: str):
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     async with aiosqlite.connect(db_path) as db:
@@ -110,21 +85,13 @@ async def init_db(db_path: str):
         await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript(SCHEMA)
         await db.executescript(SEED_PROVIDERS)
-        await db.executescript(SEED_COST_RATES)
-        # Clean up duplicate cost_rates (keep lowest id per provider+model)
-        await db.execute("""
-            DELETE FROM cost_rates WHERE id NOT IN (
-                SELECT MIN(id) FROM cost_rates GROUP BY provider, model
-            )
-        """)
         # Fix orphaned running states from previous container restart
         await db.execute("""
-            UPDATE step_agents SET status='failed',
-                result_summary='Process lost (server restart)',
+            UPDATE agent_sessions SET status='failed',
+                error_message='Process lost (server restart)',
                 completed_at=CURRENT_TIMESTAMP
             WHERE status='running'
         """)
-        await db.execute("UPDATE ticket_steps SET status='failed' WHERE status='running'")
         await db.execute("UPDATE tickets SET status='failed', updated_at=CURRENT_TIMESTAMP WHERE status='running'")
         await db.commit()
 
