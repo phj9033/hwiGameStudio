@@ -49,7 +49,10 @@ class PromptBuilder:
         ticket_title: str,
         ticket_description: str,
         step_instruction: str,
-        context_refs: List[str]
+        context_refs: List[str],
+        workspace_path: Optional[str] = None,
+        produces: Optional[List[str]] = None,
+        depends_on: Optional[List[str]] = None
     ) -> str:
         """Build a complete prompt for the agent.
 
@@ -60,6 +63,9 @@ class PromptBuilder:
             ticket_description: Description of the ticket
             step_instruction: Specific instruction for this step
             context_refs: List of file paths for additional context
+            workspace_path: Optional path to shared workspace directory
+            produces: Optional list of files this agent should produce
+            depends_on: Optional list of files available to read from other agents
 
         Returns:
             Complete prompt string ready to send to CLI
@@ -96,5 +102,30 @@ class PromptBuilder:
             sections.append("The following files are relevant to this task:\n")
             for ref in context_refs:
                 sections.append(f"- {ref}\n")
+
+        # 6. Workspace context
+        if workspace_path:
+            # Normalize workspace path (remove trailing slash for consistency)
+            ws_path = workspace_path.rstrip('/')
+
+            sections.append("\n---\n## 공유 작업 공간 (Shared Workspace)\n")
+            sections.append(f"\n작업 공간 경로: `{ws_path}`\n")
+
+            sections.append("\n### 파일 작성 규칙\n")
+            sections.append("- 결과물은 반드시 `{filename}.writing` 형태로 작성하세요\n")
+            sections.append(f"- 예: `gdd.md`를 작성할 때 → `{ws_path}/gdd.md.writing`으로 저장\n")
+            sections.append("- 작성이 완료되면 오케스트레이터가 자동으로 최종 파일명으로 변경합니다\n")
+            sections.append("- 절대 `.writing` 확장자를 직접 제거하지 마세요\n")
+
+            if produces:
+                sections.append("\n### 생성해야 할 파일\n")
+                for file in produces:
+                    sections.append(f"- `{file}` (작성 시: `{file}.writing`)\n")
+
+            if depends_on:
+                sections.append("\n### 참조 가능한 파일\n")
+                sections.append("다음 파일들은 이미 완성된 문서로, 작업 공간에서 참조할 수 있습니다:\n")
+                for file in depends_on:
+                    sections.append(f"- `{ws_path}/{file}`\n")
 
         return "".join(sections)
