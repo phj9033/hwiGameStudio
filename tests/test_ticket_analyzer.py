@@ -8,23 +8,19 @@ import json
 @pytest.mark.asyncio
 async def test_decompose_task():
     """Test decomposing task description into tickets"""
-    # Mock CLIRunner response
     mock_response = {
         "stdout": json.dumps({
             "tickets": [
                 {
                     "title": "Design combat system",
                     "description": "Create initial combat design",
-                    "steps": [
+                    "sessions": [
                         {
-                            "step_order": 1,
-                            "agents": [
-                                {
-                                    "agent_name": "sr_game_designer",
-                                    "cli_provider": "claude",
-                                    "instruction": "Design combat mechanics"
-                                }
-                            ]
+                            "agent_name": "sr_game_designer",
+                            "cli_provider": "claude",
+                            "instruction": "Design combat mechanics",
+                            "depends_on": [],
+                            "produces": ["combat_design.md"]
                         }
                     ]
                 }
@@ -48,29 +44,25 @@ async def test_decompose_task():
 
     assert len(result["tickets"]) == 1
     assert result["tickets"][0]["title"] == "Design combat system"
-    assert len(result["tickets"][0]["steps"]) == 1
+    assert len(result["tickets"][0]["sessions"]) == 1
 
 
 @pytest.mark.asyncio
 async def test_analyze_diff():
     """Test analyzing document diff and recommending tickets"""
-    # Mock CLIRunner response
     mock_response = {
         "stdout": json.dumps({
             "tickets": [
                 {
                     "title": "Implement new combat feature",
                     "description": "Based on design changes",
-                    "steps": [
+                    "sessions": [
                         {
-                            "step_order": 1,
-                            "agents": [
-                                {
-                                    "agent_name": "mechanics_developer",
-                                    "cli_provider": "codex",
-                                    "instruction": "Implement combat feature"
-                                }
-                            ]
+                            "agent_name": "mechanics_developer",
+                            "cli_provider": "codex",
+                            "instruction": "Implement combat feature",
+                            "depends_on": [],
+                            "produces": ["combat_feature.gd"]
                         }
                     ]
                 }
@@ -100,7 +92,6 @@ async def test_analyze_diff():
 @pytest.mark.asyncio
 async def test_decompose_task_invalid_json():
     """Test handling of invalid JSON response"""
-    # Mock CLIRunner returning invalid JSON
     mock_response = {
         "stdout": "This is not valid JSON",
         "stderr": "",
@@ -124,7 +115,6 @@ async def test_decompose_task_invalid_json():
 @pytest.mark.asyncio
 async def test_analyze_diff_invalid_json():
     """Test handling of invalid JSON response in diff analysis"""
-    # Mock CLIRunner returning invalid JSON
     mock_response = {
         "stdout": "Not JSON at all",
         "stderr": "",

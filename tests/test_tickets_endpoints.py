@@ -56,7 +56,7 @@ async def test_run_ticket_endpoint(project_id):
     """Test /run endpoint starts ticket execution"""
     transport = ASGITransport(app=app)
 
-    # Mock PipelineExecutor
+    # Mock SessionExecutor
     mock_result = {
         "stdout": "Success",
         "stderr": "",
@@ -66,21 +66,22 @@ async def test_run_ticket_endpoint(project_id):
         "pid": 12345
     }
 
-    with patch('backend.services.pipeline_executor.CLIRunner') as MockCLIRunner:
+    with patch('backend.services.session_executor.CLIRunner') as MockCLIRunner:
         mock_runner = MockCLIRunner.return_value
         mock_runner.run = AsyncMock(return_value=mock_result)
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            # Create ticket
+            # Create ticket with sessions
             create_resp = await client.post("/api/tickets/", json={
                 "project_id": project_id,
                 "title": "Test ticket",
-                "steps": [
+                "sessions": [
                     {
-                        "step_order": 1,
-                        "agents": [
-                            {"agent_name": "test_agent", "cli_provider": "claude", "instruction": "Test"}
-                        ]
+                        "agent_name": "test_agent",
+                        "cli_provider": "claude",
+                        "instruction": "Test",
+                        "depends_on": [],
+                        "produces": ["test_output.md"]
                     }
                 ]
             })
@@ -111,9 +112,15 @@ async def test_run_ticket_invalid_status(project_id):
         create_resp = await client.post("/api/tickets/", json={
             "project_id": project_id,
             "title": "Test ticket",
-            "steps": [{"step_order": 1, "agents": [
-                {"agent_name": "test_agent", "cli_provider": "claude", "instruction": "Test"}
-            ]}]
+            "sessions": [
+                {
+                    "agent_name": "test_agent",
+                    "cli_provider": "claude",
+                    "instruction": "Test",
+                    "depends_on": [],
+                    "produces": ["output.md"]
+                }
+            ]
         })
         ticket_id = create_resp.json()["id"]
 
@@ -142,13 +149,19 @@ async def test_cancel_ticket_endpoint(project_id):
         create_resp = await client.post("/api/tickets/", json={
             "project_id": project_id,
             "title": "Test ticket",
-            "steps": [{"step_order": 1, "agents": [
-                {"agent_name": "test_agent", "cli_provider": "claude", "instruction": "Test"}
-            ]}]
+            "sessions": [
+                {
+                    "agent_name": "test_agent",
+                    "cli_provider": "claude",
+                    "instruction": "Test",
+                    "depends_on": [],
+                    "produces": ["output.md"]
+                }
+            ]
         })
         ticket_id = create_resp.json()["id"]
 
-        # Set to running with a fake PID
+        # Set to running with a fake PID in agent_sessions
         from backend.database import get_db
         import backend.config
         async with get_db(backend.config.DATABASE_PATH) as db:
@@ -157,8 +170,7 @@ async def test_cancel_ticket_endpoint(project_id):
                 ("running", ticket_id)
             )
             await db.execute(
-                """UPDATE step_agents SET status = ?, pid = ?
-                   WHERE step_id IN (SELECT id FROM ticket_steps WHERE ticket_id = ?)""",
+                "UPDATE agent_sessions SET status = ?, pid = ? WHERE ticket_id = ?",
                 ("running", 99999, ticket_id)
             )
             await db.commit()
@@ -188,7 +200,7 @@ async def test_retry_ticket_endpoint(project_id):
         "pid": 12345
     }
 
-    with patch('backend.services.pipeline_executor.CLIRunner') as MockCLIRunner:
+    with patch('backend.services.session_executor.CLIRunner') as MockCLIRunner:
         mock_runner = MockCLIRunner.return_value
         mock_runner.run = AsyncMock(return_value=mock_result)
 
@@ -197,9 +209,15 @@ async def test_retry_ticket_endpoint(project_id):
             create_resp = await client.post("/api/tickets/", json={
                 "project_id": project_id,
                 "title": "Test ticket",
-                "steps": [{"step_order": 1, "agents": [
-                    {"agent_name": "test_agent", "cli_provider": "claude", "instruction": "Test"}
-                ]}]
+                "sessions": [
+                    {
+                        "agent_name": "test_agent",
+                        "cli_provider": "claude",
+                        "instruction": "Test",
+                        "depends_on": [],
+                        "produces": ["output.md"]
+                    }
+                ]
             })
             ticket_id = create_resp.json()["id"]
 
@@ -212,12 +230,7 @@ async def test_retry_ticket_endpoint(project_id):
                     ("failed", ticket_id)
                 )
                 await db.execute(
-                    "UPDATE ticket_steps SET status = ? WHERE ticket_id = ?",
-                    ("failed", ticket_id)
-                )
-                await db.execute(
-                    """UPDATE step_agents SET status = ?
-                       WHERE step_id IN (SELECT id FROM ticket_steps WHERE ticket_id = ?)""",
+                    "UPDATE agent_sessions SET status = ? WHERE ticket_id = ?",
                     ("failed", ticket_id)
                 )
                 await db.commit()
@@ -255,7 +268,7 @@ async def test_cancel_nonrunning_ticket(project_id):
         create_resp = await client.post("/api/tickets/", json={
             "project_id": project_id,
             "title": "Test ticket",
-            "steps": []
+            "sessions": []
         })
         ticket_id = create_resp.json()["id"]
 
@@ -274,7 +287,7 @@ async def test_retry_nonfailed_ticket(project_id):
         create_resp = await client.post("/api/tickets/", json={
             "project_id": project_id,
             "title": "Test ticket",
-            "steps": []
+            "sessions": []
         })
         ticket_id = create_resp.json()["id"]
 

@@ -163,7 +163,7 @@ async def test_providers_list(setup_db):
     assert len(data) >= 2
 
     claude = next(p for p in data if p["name"] == "claude")
-    assert claude["command"] == "claude --print"
+    assert claude["command"] == "claude --dangerously-skip-permissions -p"
     assert claude["api_key_env"] == "ANTHROPIC_API_KEY"
     assert claude["enabled"] is True
 
@@ -186,7 +186,7 @@ async def test_provider_update(setup_db):
         assert update_resp.status_code == 200
         updated = update_resp.json()
         assert updated["enabled"] is False
-        assert updated["command"] == "claude --print"
+        assert updated["command"] == "claude --dangerously-skip-permissions -p"
 
 
 @pytest.mark.asyncio
@@ -213,7 +213,7 @@ async def test_runs_get_result_file(setup_test_data):
     data = setup_test_data
     agent_id = data["agent1_id"]
 
-    # First, update agent with result_path inside PROJECTS_DIR
+    # First, update agent with session_log_path inside PROJECTS_DIR
     from backend.config import PROJECTS_DIR
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
@@ -222,9 +222,9 @@ async def test_runs_get_result_file(setup_test_data):
         with open(result_path, 'w') as f:
             f.write("Test result content")
 
-        # Update agent with result_path
+        # Update agent with session_log_path
         await client.put(f"/api/agents/runs/{agent_id}", json={
-            "result_path": result_path
+            "session_log_path": result_path
         })
 
         # Get result file
@@ -242,9 +242,9 @@ async def test_runs_get_result_file_not_found(setup_test_data):
     from backend.config import PROJECTS_DIR
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", follow_redirects=True) as client:
-        # Update agent with non-existent result_path inside PROJECTS_DIR
+        # Update agent with non-existent session_log_path inside PROJECTS_DIR
         await client.put(f"/api/agents/runs/{agent_id}", json={
-            "result_path": os.path.join(PROJECTS_DIR, "nonexistent.txt")
+            "session_log_path": os.path.join(PROJECTS_DIR, "nonexistent.txt")
         })
 
         # Get result file should return 404

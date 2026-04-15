@@ -38,26 +38,34 @@ async def project_id(setup_db):
 
 
 @pytest.mark.asyncio
-async def test_create_ticket_with_steps(project_id):
+async def test_create_ticket_with_sessions(project_id):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/api/tickets/", json={
             "project_id": project_id,
             "title": "Build combat system",
             "description": "Implement full combat",
-            "steps": [
+            "sessions": [
                 {
-                    "step_order": 1,
-                    "agents": [
-                        {"agent_name": "sr_game_designer", "cli_provider": "claude", "instruction": "Design combat"},
-                        {"agent_name": "market_analyst", "cli_provider": "claude", "instruction": "Analyze competitors"}
-                    ]
+                    "agent_name": "sr_game_designer",
+                    "cli_provider": "claude",
+                    "instruction": "Design combat",
+                    "depends_on": [],
+                    "produces": ["combat_design.md"]
                 },
                 {
-                    "step_order": 2,
-                    "agents": [
-                        {"agent_name": "mechanics_developer", "cli_provider": "codex", "instruction": "Implement combat logic"}
-                    ]
+                    "agent_name": "market_analyst",
+                    "cli_provider": "claude",
+                    "instruction": "Analyze competitors",
+                    "depends_on": [],
+                    "produces": ["competitor_analysis.md"]
+                },
+                {
+                    "agent_name": "mechanics_developer",
+                    "cli_provider": "codex",
+                    "instruction": "Implement combat logic",
+                    "depends_on": ["combat_design.md"],
+                    "produces": ["combat_system.gd"]
                 }
             ]
         })
@@ -72,7 +80,7 @@ async def test_list_tickets_by_project(project_id):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.post("/api/tickets/", json={
-            "project_id": project_id, "title": "Task 1", "steps": []
+            "project_id": project_id, "title": "Task 1", "sessions": []
         })
         resp = await client.get(f"/api/tickets/?project_id={project_id}")
     assert resp.status_code == 200
@@ -85,16 +93,22 @@ async def test_get_ticket_detail(project_id):
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         create = await client.post("/api/tickets/", json={
             "project_id": project_id, "title": "Detail test",
-            "steps": [{"step_order": 1, "agents": [
-                {"agent_name": "qa_agent", "cli_provider": "claude", "instruction": "Test"}
-            ]}]
+            "sessions": [
+                {
+                    "agent_name": "qa_agent",
+                    "cli_provider": "claude",
+                    "instruction": "Test",
+                    "depends_on": [],
+                    "produces": ["test_report.md"]
+                }
+            ]
         })
         ticket_id = create.json()["id"]
         resp = await client.get(f"/api/tickets/{ticket_id}")
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data["steps"]) == 1
-    assert len(data["steps"][0]["agents"]) == 1
+    assert len(data["sessions"]) == 1
+    assert data["sessions"][0]["agent_name"] == "qa_agent"
 
 
 @pytest.mark.asyncio
@@ -102,7 +116,7 @@ async def test_update_ticket(project_id):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         create = await client.post("/api/tickets/", json={
-            "project_id": project_id, "title": "Original title", "steps": []
+            "project_id": project_id, "title": "Original title", "sessions": []
         })
         ticket_id = create.json()["id"]
         resp = await client.put(f"/api/tickets/{ticket_id}", json={
@@ -116,14 +130,14 @@ async def test_update_ticket(project_id):
 
 
 @pytest.mark.asyncio
-async def test_create_ticket_without_steps(project_id):
-    """Test creating a ticket without steps should have status 'open'"""
+async def test_create_ticket_without_sessions(project_id):
+    """Test creating a ticket without sessions should have status 'open'"""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post("/api/tickets/", json={
             "project_id": project_id,
-            "title": "No steps ticket",
-            "steps": []
+            "title": "No sessions ticket",
+            "sessions": []
         })
     assert resp.status_code == 200
     data = resp.json()
@@ -136,7 +150,7 @@ async def test_list_all_tickets(project_id):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.post("/api/tickets/", json={
-            "project_id": project_id, "title": "Task A", "steps": []
+            "project_id": project_id, "title": "Task A", "sessions": []
         })
         resp = await client.get("/api/tickets/")
     assert resp.status_code == 200

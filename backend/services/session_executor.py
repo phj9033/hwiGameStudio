@@ -16,7 +16,7 @@ from backend.services.prompt_builder import PromptBuilder
 class SessionExecutor:
     """Parallel execution engine for agent sessions.
 
-    Replaces the sequential PipelineExecutor.  Each agent session runs as an
+    Each agent session runs as an
     independent CLI subprocess.  Sessions declare *depends_on* (files they
     need) and *produces* (files they create).  The orchestrator polls for
     completed files and launches waiting sessions when their dependencies are

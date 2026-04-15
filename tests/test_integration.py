@@ -1,7 +1,7 @@
 """
 Full workflow integration test:
 1. Create project
-2. Create ticket with pipeline
+2. Create ticket with sessions
 3. Verify ticket structure
 4. Create document
 5. Update document (triggers diff)
@@ -45,30 +45,32 @@ async def test_full_workflow(setup_db):
         assert project.status_code == 200
         project_id = project.json()["id"]
 
-        # 3. Create ticket with steps
+        # 3. Create ticket with sessions
         ticket = await client.post("/api/tickets/", json={
             "project_id": project_id,
             "title": "Build player movement",
             "description": "Implement WASD movement",
-            "steps": [
+            "sessions": [
                 {
-                    "step_order": 1,
-                    "agents": [
-                        {"agent_name": "test_agent", "cli_provider": "claude", "instruction": "Design movement system"}
-                    ]
+                    "agent_name": "test_agent",
+                    "cli_provider": "claude",
+                    "instruction": "Design movement system",
+                    "depends_on": [],
+                    "produces": ["movement_design.md"]
                 },
                 {
-                    "step_order": 2,
-                    "agents": [
-                        {"agent_name": "test_agent", "cli_provider": "codex", "instruction": "Implement movement"}
-                    ]
+                    "agent_name": "test_agent",
+                    "cli_provider": "codex",
+                    "instruction": "Implement movement",
+                    "depends_on": ["movement_design.md"],
+                    "produces": ["movement.gd"]
                 }
             ]
         })
         assert ticket.status_code == 200
         ticket_data = ticket.json()
-        assert len(ticket_data["steps"]) == 2
-        assert len(ticket_data["steps"][0]["agents"]) == 1
+        assert len(ticket_data["sessions"]) == 2
+        assert ticket_data["sessions"][0]["agent_name"] == "test_agent"
 
         # 4. Verify ticket appears in list
         tickets_list = await client.get(f"/api/tickets/?project_id={project_id}")
