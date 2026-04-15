@@ -117,7 +117,7 @@ if st.session_state.get("show_ticket_detail"):
         ticket_status = ticket_detail["status"]
         action_cols = st.columns(4)
         with action_cols[0]:
-            if ticket_status in ("assigned", "open") and ticket_detail.get("steps"):
+            if ticket_status in ("assigned", "open") and ticket_detail.get("sessions"):
                 if st.button("▶️ Run", key="run_ticket", type="primary", use_container_width=True):
                     try:
                         post(f"/api/tickets/{ticket_id}/run")
@@ -135,15 +135,6 @@ if st.session_state.get("show_ticket_detail"):
                     except Exception as e:
                         st.error(f"Failed: {e}")
         with action_cols[2]:
-            if ticket_status == "failed":
-                if st.button("🔄 Retry", key="retry_ticket", use_container_width=True):
-                    try:
-                        post(f"/api/tickets/{ticket_id}/retry")
-                        st.success("Retrying failed steps!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed: {e}")
-        with action_cols[3]:
             col_a, col_b = st.columns(2)
             with col_a:
                 if st.button("🔄 Refresh", key="refresh_detail", use_container_width=True):
@@ -159,77 +150,129 @@ if st.session_state.get("show_ticket_detail"):
                         except Exception as e:
                             st.error(f"Failed: {e}")
 
-        steps = ticket_detail.get("steps", [])
-        if steps:
+        sessions = ticket_detail.get("sessions", [])
+        if sessions:
             # Progress bar & summary when running
-            total_steps = len(steps)
-            completed_steps = sum(1 for s in steps if s["status"] == "completed")
+            total_sessions = len(sessions)
+            completed_sessions = sum(1 for s in sessions if s["status"] == "completed")
+            failed_sessions = sum(1 for s in sessions if s["status"] == "failed")
+            running_sessions = sum(1 for s in sessions if s["status"] == "running")
 
             if ticket_status == "running":
                 st.markdown("#### Pipeline Progress")
-                progress_value = completed_steps / total_steps if total_steps > 0 else 0
-                st.progress(progress_value, text=f"Step {completed_steps + 1} / {total_steps} running...")
+                progress_value = completed_sessions / total_sessions if total_sessions > 0 else 0
+                st.progress(progress_value, text=f"{completed_sessions} completed / {running_sessions} running / {total_sessions} total")
 
-                # Find currently running agent and show elapsed time
-                for step in steps:
-                    for agent in step.get("agents", []):
-                        if agent["status"] == "running" and agent.get("started_at"):
-                            try:
-                                started = datetime.fromisoformat(agent["started_at"])
-                                now = datetime.now(timezone.utc) if started.tzinfo else datetime.now()
-                                elapsed = now - started
-                                mins, secs = divmod(int(elapsed.total_seconds()), 60)
-                                st.info(
-                                    f"▶️ **{agent['agent_name']}** running for "
-                                    f"**{mins}m {secs}s** (provider: {agent['cli_provider']})"
-                                )
-                            except Exception:
-                                st.info(f"▶️ **{agent['agent_name']}** running...")
+                # Find currently running sessions and show elapsed time
+                for session in sessions:
+                    if session["status"] == "running" and session.get("started_at"):
+                        try:
+                            started = datetime.fromisoformat(session["started_at"])
+                            now = datetime.now(timezone.utc) if started.tzinfo else datetime.now()
+                            elapsed = now - started
+                            mins, secs = divmod(int(elapsed.total_seconds()), 60)
+                            st.info(
+                                f"▶️ **{session['agent_name']}** running for "
+                                f"**{mins}m {secs}s** (provider: {session['cli_provider']})"
+                            )
+                        except Exception:
+                            st.info(f"▶️ **{session['agent_name']}** running...")
             else:
-                st.markdown("#### Pipeline Steps")
+                st.markdown("#### Sessions")
+                if failed_sessions > 0:
+                    st.caption(f"{completed_sessions} completed, {failed_sessions} failed, {total_sessions} total")
+                else:
+                    st.caption(f"{completed_sessions} completed / {total_sessions} total")
 
-            for step in steps:
-                status_icon = {"pending": "⏳", "running": "▶️", "completed": "✅", "failed": "❌", "cancelled": "⏹️"}.get(step["status"], "❓")
-                with st.expander(f"{status_icon} Step {step['step_order']} - {step['status']}", expanded=(step["status"] in ("running", "failed"))):
-                    for agent in step.get("agents", []):
-                        agent_icon = {"pending": "⏳", "running": "▶️", "completed": "✅", "failed": "❌", "cancelled": "⏹️"}.get(agent["status"], "❓")
-                        st.markdown(f"**{agent_icon} {agent['agent_name']}** | Provider: {agent['cli_provider']} | Status: {agent['status']}")
+            # Display sessions as cards
+            for session in sessions:
+                status = session["status"]
+                status_config = {
+                    "pending": {"icon": "⏳", "color": "#808080", "label": "Pending"},
+                    "waiting": {"icon": "⏸️", "color": "#FFA500", "label": "Waiting"},
+                    "running": {"icon": "▶️", "color": "#1E90FF", "label": "Running"},
+                    "completed": {"icon": "✅", "color": "#32CD32", "label": "Completed"},
+                    "failed": {"icon": "❌", "color": "#DC143C", "label": "Failed"},
+                    "cancelled": {"icon": "⏹️", "color": "#808080", "label": "Cancelled"}
+                }
+                config = status_config.get(status, {"icon": "❓", "color": "#808080", "label": status})
 
-                        # Show elapsed time for running agent
-                        if agent["status"] == "running" and agent.get("started_at"):
+                expanded = status in ("running", "failed")
+                with st.expander(f"{config['icon']} **{session['agent_name']}** - {config['label']}", expanded=expanded):
+                    # Status badge
+                    st.markdown(
+                        f"<span style='background-color:{config['color']};color:white;padding:4px 8px;border-radius:4px;font-size:12px;font-weight:bold;'>"
+                        f"{config['label']}</span>",
+                        unsafe_allow_html=True
+                    )
+
+                    # Basic info
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"**Provider:** {session['cli_provider']}")
+                        if session.get("depends_on"):
+                            st.markdown(f"**Depends on:** {', '.join(session['depends_on'])}")
+                    with col2:
+                        if session.get("produces"):
+                            st.markdown(f"**Produces:** {', '.join(session['produces'])}")
+
+                    # Show waiting reason for waiting sessions
+                    if status == "waiting" and session.get("depends_on"):
+                        st.warning(f"⏸️ Waiting for: {', '.join(session['depends_on'])}")
+
+                    # Show instruction
+                    if session.get("instruction"):
+                        st.markdown(f"**Instruction:** {session['instruction']}")
+
+                    # Show elapsed time for running sessions
+                    if status == "running" and session.get("started_at"):
+                        try:
+                            started = datetime.fromisoformat(session["started_at"])
+                            now = datetime.now(timezone.utc) if started.tzinfo else datetime.now()
+                            elapsed = now - started
+                            mins, secs = divmod(int(elapsed.total_seconds()), 60)
+                            st.caption(f"⏱️ Elapsed: {mins}m {secs}s")
+                        except Exception:
+                            pass
+
+                    # Show duration for completed sessions
+                    if status == "completed" and session.get("started_at") and session.get("completed_at"):
+                        try:
+                            started = datetime.fromisoformat(session["started_at"])
+                            completed = datetime.fromisoformat(session["completed_at"])
+                            duration = completed - started
+                            mins, secs = divmod(int(duration.total_seconds()), 60)
+                            st.caption(f"⏱️ Duration: {mins}m {secs}s")
+                        except Exception:
+                            pass
+
+                    # Show error message for failed sessions
+                    if status == "failed" and session.get("error_message"):
+                        st.error(f"**Error:** {session['error_message']}")
+
+                    # Show token usage
+                    if session.get("input_tokens") or session.get("output_tokens"):
+                        st.caption(f"Tokens: {session.get('input_tokens', 0):,} in / {session.get('output_tokens', 0):,} out")
+
+                    # Retry button for failed sessions
+                    if status == "failed":
+                        if st.button(f"🔄 Retry Session", key=f"retry_session_{session['id']}"):
                             try:
-                                started = datetime.fromisoformat(agent["started_at"])
-                                now = datetime.now(timezone.utc) if started.tzinfo else datetime.now()
-                                elapsed = now - started
-                                mins, secs = divmod(int(elapsed.total_seconds()), 60)
-                                st.caption(f"⏱️ Elapsed: {mins}m {secs}s")
-                            except Exception:
-                                pass
+                                post(f"/api/sessions/{session['id']}/retry")
+                                st.success("Session retry initiated!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to retry: {e}")
 
-                        # Show duration for completed agent
-                        if agent["status"] == "completed" and agent.get("started_at") and agent.get("completed_at"):
-                            try:
-                                started = datetime.fromisoformat(agent["started_at"])
-                                completed = datetime.fromisoformat(agent["completed_at"])
-                                duration = completed - started
-                                mins, secs = divmod(int(duration.total_seconds()), 60)
-                                st.caption(f"⏱️ Duration: {mins}m {secs}s")
-                            except Exception:
-                                pass
+                    # View session details button
+                    if status in ("completed", "failed"):
+                        if st.button(f"👁️ View Details", key=f"view_session_{session['id']}"):
+                            st.session_state.selected_session_id = session['id']
+                            st.session_state.show_session_viewer = True
+                            st.rerun()
 
-                        st.markdown(f"**Instruction:** {agent.get('instruction', 'No instruction')}")
-                        if agent.get("result_summary"):
-                            if agent["status"] == "failed":
-                                st.error(f"**Error:** {agent['result_summary']}")
-                            else:
-                                st.markdown(f"**Result:** {agent['result_summary']}")
-                        if agent.get("input_tokens") or agent.get("output_tokens"):
-                            st.caption(f"Tokens: {agent.get('input_tokens', 0):,} in / {agent.get('output_tokens', 0):,} out")
-                        if agent.get("estimated_cost"):
-                            st.caption(f"Cost: ${agent['estimated_cost']:.4f}")
-                        st.markdown("---")
         elif ticket_status in ("open", "assigned"):
-            st.info("No pipeline steps defined. This ticket has no executable steps.")
+            st.info("No sessions defined. This ticket has no executable sessions.")
 
         # Auto-refresh when running
         if ticket_status == "running":
@@ -238,3 +281,17 @@ if st.session_state.get("show_ticket_detail"):
             st.rerun()
     except Exception as e:
         st.error(f"Failed to fetch ticket details: {e}")
+
+# Session viewer modal
+if st.session_state.get("show_session_viewer"):
+    from components.result_viewer import render_session_viewer
+    session_id = st.session_state.get("selected_session_id")
+    st.divider()
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(f"### 🔍 Session #{session_id} Details")
+    with col2:
+        if st.button("Close Viewer", key="close_session_viewer"):
+            st.session_state.show_session_viewer = False
+            st.rerun()
+    render_session_viewer(session_id)

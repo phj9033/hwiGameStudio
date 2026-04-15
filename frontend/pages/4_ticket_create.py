@@ -2,7 +2,6 @@ import streamlit as st
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from api_client import get, post
-from components.pipeline_editor import pipeline_editor, validate_pipeline
 import requests
 
 st.set_page_config(page_title="Create Ticket", page_icon="🎫", layout="wide")
@@ -33,6 +32,8 @@ if "ai_project_id" not in st.session_state:
     st.session_state.ai_project_id = None
 if "ticket_mode" not in st.session_state:
     st.session_state.ticket_mode = "Manual Input"
+if "manual_sessions" not in st.session_state:
+    st.session_state.manual_sessions = []
 
 # Mode selector
 mode = st.radio(
@@ -73,42 +74,48 @@ if mode == "Manual Input":
         created_by = st.text_input("Created By", placeholder="Your name (optional)")
 
         st.divider()
-        st.markdown("### Pipeline Configuration")
-        st.caption("Define the steps and agents for this ticket")
+        st.markdown("### Session Configuration")
+        st.caption("Define the sessions for this ticket. Each session runs independently based on dependencies.")
 
-        num_steps = st.number_input("Number of Steps", min_value=1, max_value=10, value=1)
+        num_sessions = st.number_input("Number of Sessions", min_value=1, max_value=20, value=1)
 
-        steps = []
-        for step_idx in range(num_steps):
-            with st.expander(f"Step {step_idx + 1}", expanded=True):
-                num_agents = st.number_input("Number of Agents", min_value=1, max_value=10, value=1, key=f"num_agents_{step_idx}")
-                agents = []
-                for agent_idx in range(num_agents):
-                    st.markdown(f"**Agent {agent_idx + 1}**")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        agent_name = st.selectbox("Agent", agent_names, key=f"agent_name_{step_idx}_{agent_idx}")
-                    with col2:
-                        cli_provider = st.selectbox("CLI Provider", ["claude", "codex"], key=f"provider_{step_idx}_{agent_idx}")
-                    instruction = st.text_area("Instruction", key=f"instruction_{step_idx}_{agent_idx}", placeholder="What should this agent do?", height=100)
-                    if agent_name:
-                        agents.append({"agent_name": agent_name, "cli_provider": cli_provider, "instruction": instruction, "context_refs": []})
-                if agents:
-                    steps.append({"step_order": step_idx + 1, "agents": agents})
+        sessions = []
+        for session_idx in range(num_sessions):
+            with st.expander(f"Session {session_idx + 1}", expanded=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    agent_name = st.selectbox("Agent*", agent_names, key=f"agent_name_{session_idx}")
+                with col2:
+                    cli_provider = st.selectbox("CLI Provider", ["claude", "codex"], key=f"provider_{session_idx}")
+
+                instruction = st.text_area("Instruction*", key=f"instruction_{session_idx}", placeholder="What should this agent do?", height=100)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    depends_on_str = st.text_input("Depends On (comma-separated artifact names)", key=f"depends_on_{session_idx}", placeholder="e.g., design_doc, api_spec")
+                with col2:
+                    produces_str = st.text_input("Produces (comma-separated artifact names)", key=f"produces_{session_idx}", placeholder="e.g., combat_code, test_results")
+
+                depends_on = [d.strip() for d in depends_on_str.split(",") if d.strip()] if depends_on_str else []
+                produces = [p.strip() for p in produces_str.split(",") if p.strip()] if produces_str else []
+
+                if agent_name and instruction:
+                    sessions.append({
+                        "agent_name": agent_name,
+                        "cli_provider": cli_provider,
+                        "instruction": instruction,
+                        "depends_on": depends_on,
+                        "produces": produces
+                    })
 
         submitted = st.form_submit_button("Create Ticket", type="primary")
 
     if submitted:
         if not title:
             st.error("Title is required")
-        elif not steps:
-            st.error("At least one step with an agent is required")
+        elif not sessions:
+            st.error("At least one session with agent and instruction is required")
         else:
-            if steps:
-                valid, error_msg = validate_pipeline(steps)
-                if not valid:
-                    st.error(f"Pipeline validation failed: {error_msg}")
-                    st.stop()
             try:
                 result = post("/api/tickets/", json={
                     "project_id": project,
@@ -116,7 +123,7 @@ if mode == "Manual Input":
                     "description": description,
                     "source": "manual",
                     "created_by": created_by,
-                    "steps": steps
+                    "sessions": sessions
                 })
                 st.session_state.selected_ticket_id = result["id"]
                 st.session_state.show_ticket_detail = True
@@ -146,7 +153,7 @@ elif mode == "AI Auto-Generate":
     # AI is generating - poll for result
     if st.session_state.ai_generating:
         import time
-        st.warning("AI가 분석 중입니다. 자동으로 결과를 확인합니다...")
+        st.warning("AI is analyzing. Checking for results automatically...")
         job_id = st.session_state.get("ai_job_id")
         if job_id:
             try:
@@ -214,25 +221,29 @@ elif mode == "AI Auto-Generate":
             for idx, ticket in enumerate(tickets):
                 with st.expander(f"Ticket {idx + 1}: {ticket['title']}", expanded=True):
                     st.markdown(f"**Description:** {ticket['description']}")
-                    for step in ticket.get("steps", []):
-                        st.markdown(f"  - Step {step['step_order']}:")
-                        for agent in step.get("agents", []):
-                            st.markdown(f"    - **{agent['agent_name']}** ({agent['cli_provider']}): {agent['instruction']}")
+
+                    # Display sessions
+                    sessions = ticket.get("sessions", [])
+                    if sessions:
+                        st.markdown("**Sessions:**")
+                        for session_idx, session in enumerate(sessions):
+                            st.markdown(f"  {session_idx + 1}. **{session['agent_name']}** ({session['cli_provider']})")
+                            st.markdown(f"     - Instruction: {session['instruction']}")
+                            if session.get("depends_on"):
+                                st.markdown(f"     - Depends on: {', '.join(session['depends_on'])}")
+                            if session.get("produces"):
+                                st.markdown(f"     - Produces: {', '.join(session['produces'])}")
+
                     if st.button(f"Create This Ticket", key=f"create_{idx}"):
                         try:
-                            clean_steps = []
-                            for step in ticket.get("steps", []):
-                                clean_agents = []
-                                for agent in step.get("agents", []):
-                                    clean_agents.append({
-                                        "agent_name": agent.get("agent_name", ""),
-                                        "cli_provider": agent.get("cli_provider", "claude"),
-                                        "instruction": agent.get("instruction", ""),
-                                        "context_refs": agent.get("context_refs", [])
-                                    })
-                                clean_steps.append({
-                                    "step_order": step.get("step_order", 0),
-                                    "agents": clean_agents
+                            clean_sessions = []
+                            for session in sessions:
+                                clean_sessions.append({
+                                    "agent_name": session.get("agent_name", ""),
+                                    "cli_provider": session.get("cli_provider", "claude"),
+                                    "instruction": session.get("instruction", ""),
+                                    "depends_on": session.get("depends_on", []),
+                                    "produces": session.get("produces", [])
                                 })
                             post("/api/tickets/", json={
                                 "project_id": st.session_state.ai_project_id,
@@ -240,7 +251,7 @@ elif mode == "AI Auto-Generate":
                                 "description": ticket.get("description", ""),
                                 "source": "ai_generated",
                                 "created_by": "AI",
-                                "steps": clean_steps
+                                "sessions": clean_sessions
                             })
                             st.success(f"Ticket '{ticket['title']}' created!")
                         except Exception as e:

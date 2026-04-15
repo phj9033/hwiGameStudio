@@ -35,8 +35,8 @@ class AgentRunUpdate(BaseModel):
     output_tokens: Optional[int] = None
     estimated_cost: Optional[float] = None
     status: Optional[str] = None
-    result_summary: Optional[str] = None
-    result_path: Optional[str] = None
+    error_message: Optional[str] = None
+    session_log_path: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
 
@@ -80,16 +80,43 @@ async def update_agent(name: str, update: AgentContentUpdate):
 
 @router.get("/{name}/runs", response_model=PaginatedResponse[SessionResponse])
 async def get_agent_runs(name: str, page: int = Query(1, ge=1), per_page: int = Query(50, ge=1, le=100)):
+    import json
     async with get_db() as db:
         cursor = await db.execute("SELECT COUNT(*) FROM agent_sessions WHERE agent_name = ?", (name,))
         total = (await cursor.fetchone())[0]
         offset = (page - 1) * per_page
         cursor = await db.execute(
-            "SELECT * FROM agent_sessions WHERE agent_name = ? ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            """
+            SELECT id, ticket_id, agent_name, cli_provider, instruction, depends_on, produces,
+                   status, error_message, input_tokens, output_tokens, estimated_cost,
+                   session_log_path, pid, started_at, completed_at, retry_count, created_at
+            FROM agent_sessions WHERE agent_name = ? ORDER BY started_at DESC LIMIT ? OFFSET ?
+            """,
             (name, per_page, offset)
         )
         rows = await cursor.fetchall()
-    items = [SessionResponse(**dict(r)) for r in rows]
+    items = []
+    for row in rows:
+        items.append(SessionResponse(
+            id=row[0],
+            ticket_id=row[1],
+            agent_name=row[2],
+            cli_provider=row[3],
+            instruction=row[4],
+            depends_on=json.loads(row[5]) if row[5] else [],
+            produces=json.loads(row[6]) if row[6] else [],
+            status=row[7],
+            error_message=row[8],
+            input_tokens=row[9],
+            output_tokens=row[10],
+            estimated_cost=row[11],
+            session_log_path=row[12],
+            pid=row[13],
+            started_at=row[14],
+            completed_at=row[15],
+            retry_count=row[16],
+            created_at=row[17]
+        ))
     return PaginatedResponse(items=items, total=total, page=page, per_page=per_page)
 
 
@@ -121,12 +148,12 @@ async def update_agent_run(agent_run_id: int, update: AgentRunUpdate):
         if update.status is not None:
             updates.append("status = ?")
             params.append(update.status)
-        if update.result_summary is not None:
-            updates.append("result_summary = ?")
-            params.append(update.result_summary)
-        if update.result_path is not None:
-            updates.append("result_path = ?")
-            params.append(update.result_path)
+        if update.error_message is not None:
+            updates.append("error_message = ?")
+            params.append(update.error_message)
+        if update.session_log_path is not None:
+            updates.append("session_log_path = ?")
+            params.append(update.session_log_path)
         if update.started_at is not None:
             updates.append("started_at = ?")
             params.append(update.started_at)
@@ -143,11 +170,12 @@ async def update_agent_run(agent_run_id: int, update: AgentRunUpdate):
             await db.commit()
 
         # Fetch updated record
+        import json
         cursor = await db.execute(
             """
-            SELECT id, agent_name, cli_provider, instruction, context_refs, status,
-                   input_tokens, output_tokens, estimated_cost, result_summary,
-                   result_path, started_at, completed_at, retry_count
+            SELECT id, ticket_id, agent_name, cli_provider, instruction, depends_on, produces,
+                   status, error_message, input_tokens, output_tokens, estimated_cost,
+                   session_log_path, pid, started_at, completed_at, retry_count, created_at
             FROM agent_sessions
             WHERE id = ?
             """,
@@ -157,17 +185,21 @@ async def update_agent_run(agent_run_id: int, update: AgentRunUpdate):
 
         return SessionResponse(
             id=row[0],
-            agent_name=row[1],
-            cli_provider=row[2],
-            instruction=row[3],
-            context_refs=row[4],
-            status=row[5],
-            input_tokens=row[6],
-            output_tokens=row[7],
-            estimated_cost=row[8],
-            result_summary=row[9],
-            result_path=row[10],
-            started_at=row[11],
-            completed_at=row[12],
-            retry_count=row[13]
+            ticket_id=row[1],
+            agent_name=row[2],
+            cli_provider=row[3],
+            instruction=row[4],
+            depends_on=json.loads(row[5]) if row[5] else [],
+            produces=json.loads(row[6]) if row[6] else [],
+            status=row[7],
+            error_message=row[8],
+            input_tokens=row[9],
+            output_tokens=row[10],
+            estimated_cost=row[11],
+            session_log_path=row[12],
+            pid=row[13],
+            started_at=row[14],
+            completed_at=row[15],
+            retry_count=row[16],
+            created_at=row[17]
         )
