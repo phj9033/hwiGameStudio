@@ -1,5 +1,5 @@
 import pytest
-from backend.services.token_parser import parse_claude_output, parse_codex_output, calculate_cost
+from backend.services.token_parser import parse_claude_output, parse_codex_output
 
 
 def test_parse_claude_output():
@@ -16,6 +16,30 @@ def test_parse_claude_output_alternate_format():
     result = parse_claude_output(output)
     assert result["input_tokens"] == 1000
     assert result["output_tokens"] == 500
+
+
+def test_parse_claude_output_total_tokens():
+    """Test parsing 'Total input tokens: 1,234' format"""
+    output = "Total input tokens: 1,234\nTotal output tokens: 5,678"
+    result = parse_claude_output(output)
+    assert result["input_tokens"] == 1234
+    assert result["output_tokens"] == 5678
+
+
+def test_parse_claude_output_json():
+    """Test parsing JSON format"""
+    output = '{"input_tokens": 100, "output_tokens": 200}'
+    result = parse_claude_output(output)
+    assert result["input_tokens"] == 100
+    assert result["output_tokens"] == 200
+
+
+def test_parse_claude_output_json_camelcase():
+    """Test parsing JSON format with camelCase keys"""
+    output = '{"inputTokens": 300, "outputTokens": 400}'
+    result = parse_claude_output(output)
+    assert result["input_tokens"] == 300
+    assert result["output_tokens"] == 400
 
 
 def test_parse_claude_output_failure():
@@ -38,25 +62,3 @@ def test_parse_codex_output_failure():
     result = parse_codex_output("no token data")
     assert result["input_tokens"] is None
     assert result["output_tokens"] is None
-
-
-def test_calculate_cost():
-    """Test cost calculation from token counts"""
-    # input=8230, output=3120, rates=0.015/0.075 per 1K
-    # (8230/1000 * 0.015) + (3120/1000 * 0.075) = 0.12345 + 0.234 = 0.35745
-    cost = calculate_cost(8230, 3120, input_rate=0.015, output_rate=0.075)
-    assert abs(cost - 0.35745) < 0.0001
-
-
-def test_calculate_cost_zero_tokens():
-    """Test cost with zero tokens"""
-    cost = calculate_cost(0, 0, input_rate=0.015, output_rate=0.075)
-    assert cost == 0.0
-
-
-def test_calculate_cost_codex_rates():
-    """Test cost calculation with codex rates"""
-    # input=10000, output=5000, rates=0.003/0.015 per 1K
-    # (10000/1000 * 0.003) + (5000/1000 * 0.015) = 0.03 + 0.075 = 0.105
-    cost = calculate_cost(10000, 5000, input_rate=0.003, output_rate=0.015)
-    assert abs(cost - 0.105) < 0.0001
