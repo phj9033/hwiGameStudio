@@ -82,7 +82,7 @@ projects/{project}/
 
 - `ticket_steps` 테이블
 - `step_agents` 테이블
-- 기존 프로젝트/캐시 데이터 전부 초기화
+- 기존 프로젝트/캐시 데이터 전부 초기화 (`projects`, `cli_providers` 테이블은 유지, 나머지 drop & recreate)
 
 ### 새 테이블: `agent_sessions`
 
@@ -95,7 +95,8 @@ CREATE TABLE agent_sessions (
     instruction TEXT NOT NULL,
     depends_on TEXT DEFAULT '[]',           -- JSON array: ["gdd.md"]
     produces TEXT DEFAULT '[]',             -- JSON array: ["mechanics_spec.md"]
-    status TEXT NOT NULL DEFAULT 'pending', -- pending/waiting/running/completed/failed
+    status TEXT NOT NULL DEFAULT 'pending', -- pending/waiting/running/completed/failed/cancelled
+    error_message TEXT,                      -- 실패/취소 시 원인 기록
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
     estimated_cost REAL DEFAULT 0,
@@ -116,7 +117,12 @@ waiting   → 의존 문서 대기 중
 running   → CLI 프로세스 실행 중
 completed → 완료, produces 파일 생성됨
 failed    → 실패
+cancelled → 사용자 취소
 ```
+
+### 의존성 검증
+
+티켓 생성 시 `depends_on`/`produces` 관계를 **위상 정렬(topological sort)**로 검증하여 순환 의존성을 사전 차단. 순환이 발견되면 티켓 생성 거부 + 에러 메시지 반환.
 
 ## 파이프라인 실행 로직
 
@@ -124,10 +130,13 @@ failed    → 실패
 async def execute_ticket(ticket_id):
     sessions = get_sessions(ticket_id)
 
-    # 의존성 없는 에이전트 즉시 시작
+    # 의존성 없는 에이전트 즉시 시작 (상태를 먼저 변경하여 중복 실행 방지)
     for session in sessions:
         if not session.depends_on:
+            update_status(session, "running")  # 동기적으로 먼저 상태 변경
             asyncio.create_task(run_session(session))
+        else:
+            update_status(session, "waiting")
 
     # 폴링 루프: 대기 중인 에이전트 체크
     while has_pending_or_waiting(ticket_id):
@@ -141,6 +150,7 @@ async def execute_ticket(ticket_id):
             )
 
             if all_ready:
+                update_status(session, "running")  # 동기적으로 먼저 상태 변경
                 asyncio.create_task(run_session(session))
 
         await asyncio.sleep(5)
@@ -148,8 +158,6 @@ async def execute_ticket(ticket_id):
     update_ticket_status(ticket_id)
 
 async def run_session(session):
-    update_status(session, "running")
-
     # 프롬프트 빌드: 에이전트 정의 + instruction + workspace 경로 + 컨벤션
     prompt = build_prompt(session, workspace_path, conventions)
 
@@ -159,15 +167,52 @@ async def run_session(session):
     # 세션 로그 저장
     save_session_log(session, result.stdout)
 
-    # produces 파일은 에이전트가 직접 작성 (.writing → rename)
-    update_status(session, "completed" if result.success else "failed")
+    if result.success:
+        # 오케스트레이터가 .writing → 최종 파일 rename 담당
+        for filename in session.produces:
+            writing_path = workspace + filename + ".writing"
+            final_path = workspace + filename
+            if os.path.exists(writing_path):
+                os.rename(writing_path, final_path)
+        update_status(session, "completed")
+    else:
+        # 실패 시 .writing 파일 정리
+        for filename in session.produces:
+            writing_path = workspace + filename + ".writing"
+            if os.path.exists(writing_path):
+                os.remove(writing_path)
+        update_status(session, "failed", error=result.stderr)
 ```
 
 ### 실패 처리
 
 - 에이전트 하나가 실패해도 다른 독립 에이전트는 계속 진행
 - 실패한 에이전트에 의존하는 에이전트만 대기 상태로 남음
-- 타임아웃: 설정 가능한 최대 대기 시간 (기본 30분), 초과 시 failed
+- **대기 타임아웃**: 의존 문서 대기 최대 30분, 초과 시 failed (의존 에이전트가 실패한 경우)
+- **실행 타임아웃**: CLI 프로세스 실행 최대 60분, 초과 시 kill + failed
+- `.writing` 파일 정리: 오케스트레이터가 담당. 실패 시 `.writing` 파일 삭제, 성공 시 rename
+
+### 취소 처리
+
+- `POST /api/tickets/{id}/cancel` 호출 시:
+  - `running` 세션: PID로 프로세스 kill → `cancelled` 상태 + `.writing` 파일 삭제
+  - `waiting` 세션: 즉시 `cancelled` 상태
+  - `pending` 세션: 즉시 `cancelled` 상태
+
+### 재시도 (Retry)
+
+- 실패한 세션만 선택적 재시도 가능
+- 재시도 시: (1) 해당 세션의 `produces` 파일 삭제 (2) 상태를 `pending`/`waiting`으로 리셋 (3) 의존하던 다운스트림 세션도 `waiting`으로 리셋
+- `retry_count` 증가
+
+### 동시 실행 제한
+
+- `max_parallel_sessions` 설정 가능 (기본값: 5)
+- 실행 가능 세션이 제한을 초과하면 `pending` 상태로 대기 후 슬롯이 열리면 시작
+
+### 파일시스템 전제
+
+- workspace는 로컬 POSIX 파일시스템 (macOS/Linux) 기준, `os.rename`이 atomic임을 전제
 
 ## API 변경
 
@@ -211,7 +256,7 @@ POST /api/tickets/
 ```
 GET  /api/sessions/{id}                      # 세션 메타데이터
 GET  /api/sessions/{id}/log                  # 세션 로그 파일 내용
-GET  /api/tickets/{id}/workspace             # 공유 문서 목록
+GET  /api/tickets/{id}/workspace             # 공유 문서 목록 [{filename, size, modified, is_writing}]
 GET  /api/tickets/{id}/workspace/{filename}  # 공유 문서 내용
 ```
 
