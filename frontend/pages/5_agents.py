@@ -72,7 +72,7 @@ else:
                     st.caption(f"Showing {len(runs)} of {total} runs")
                     for run in runs:
                         with st.container():
-                            col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+                            col1, col2, col3 = st.columns([3, 2, 3])
                             with col1:
                                 status_icon = {"pending": "⏳", "running": "▶️", "completed": "✅", "failed": "❌", "cancelled": "⏹️"}.get(run["status"], "❓")
                                 st.markdown(f"**{status_icon} Run #{run['id']}**")
@@ -85,9 +85,6 @@ else:
                                     st.metric("Input Tokens", f"{run['input_tokens']:,}")
                                 if run.get("output_tokens"):
                                     st.metric("Output Tokens", f"{run['output_tokens']:,}")
-                            with col4:
-                                if run.get("estimated_cost"):
-                                    st.metric("Cost", f"${run['estimated_cost']:.4f}")
                             if run.get("instruction"):
                                 with st.expander("View Instruction"):
                                     st.text(run["instruction"])
