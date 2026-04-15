@@ -388,10 +388,10 @@ async def run_ticket(ticket_id: int, background_tasks: BackgroundTasks):
         )
         await db.commit()
 
-    # Launch pipeline executor in background
-    from backend.services.pipeline_executor import PipelineExecutor
-    executor = PipelineExecutor()
-    background_tasks.add_task(executor.run_ticket, ticket_id)
+    # Launch session executor in background
+    from backend.services.session_executor import SessionExecutor
+    executor = SessionExecutor()
+    background_tasks.add_task(executor.execute_ticket, ticket_id)
 
     return {"message": "Ticket execution started", "ticket_id": ticket_id}
 
@@ -412,8 +412,8 @@ async def cancel_ticket(ticket_id: int):
             )
 
     # Cancel the ticket
-    from backend.services.pipeline_executor import PipelineExecutor
-    executor = PipelineExecutor()
+    from backend.services.session_executor import SessionExecutor
+    executor = SessionExecutor()
     await executor.cancel_ticket(ticket_id)
 
     return {"message": "Ticket cancelled", "ticket_id": ticket_id}
@@ -435,8 +435,8 @@ async def retry_ticket(ticket_id: int, background_tasks: BackgroundTasks):
             )
 
     # Launch retry in background
-    from backend.services.pipeline_executor import PipelineExecutor
-    executor = PipelineExecutor()
-    background_tasks.add_task(executor.retry_ticket, ticket_id)
+    from backend.services.session_executor import SessionExecutor
+    executor = SessionExecutor()
+    background_tasks.add_task(executor.execute_ticket, ticket_id)
 
     return {"message": "Ticket retry started", "ticket_id": ticket_id}
