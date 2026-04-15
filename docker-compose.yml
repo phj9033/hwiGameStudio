@@ -13,8 +13,9 @@ services:
       - ./projects:/app/projects
       # Codex config: host config mounted read-only, entrypoint copies to writable location
       - ~/.codex/config.toml:/home/appuser/.codex-host/config.toml:ro
+      # Claude data directory (required for ccusage usage tracking)
+      - ~/.claude:/home/appuser/.claude:ro
       # Only needed for AUTH_MODE=cli (OAuth). Remove for api/bedrock mode.
-      # - ~/.claude:/root/.claude:ro
       # - ~/.claude.json:/root/.claude.json:ro
     env_file:
       - .env
