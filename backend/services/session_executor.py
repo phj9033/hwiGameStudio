@@ -25,7 +25,7 @@ class SessionExecutor:
 
     def __init__(
         self,
-        max_parallel: int = 5,
+        max_parallel: int = 3,
         projects_dir: str = "projects",
         poll_interval: float = 5,
     ):

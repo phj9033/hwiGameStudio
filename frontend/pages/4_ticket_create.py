@@ -218,6 +218,58 @@ elif mode == "AI Auto-Generate":
         tickets = st.session_state.ai_tickets
         if tickets:
             st.success(f"Generated {len(tickets)} ticket recommendation(s)!")
+
+            # Bulk create all tickets
+            col_bulk1, col_bulk2 = st.columns([1, 1])
+            with col_bulk1:
+                if st.button("Create All Tickets", type="primary"):
+                    created = 0
+                    failed = 0
+                    errors = []
+                    for ticket in tickets:
+                        try:
+                            raw_sessions = ticket.get("sessions", [])
+                            # Collect all produces within this ticket
+                            internal_produces = set()
+                            for s in raw_sessions:
+                                internal_produces.update(s.get("produces", []))
+
+                            clean_sessions = []
+                            for session in raw_sessions:
+                                # Filter depends_on to only include artifacts produced within this ticket
+                                depends_on = [d for d in session.get("depends_on", []) if d in internal_produces]
+                                clean_sessions.append({
+                                    "agent_name": session.get("agent_name", ""),
+                                    "cli_provider": session.get("cli_provider", "claude"),
+                                    "instruction": session.get("instruction", ""),
+                                    "depends_on": depends_on,
+                                    "produces": session.get("produces", [])
+                                })
+                            post("/api/tickets/", json={
+                                "project_id": st.session_state.ai_project_id,
+                                "title": ticket.get("title", ""),
+                                "description": ticket.get("description", ""),
+                                "source": "ai_generated",
+                                "created_by": "AI",
+                                "sessions": clean_sessions
+                            })
+                            created += 1
+                        except Exception as e:
+                            failed += 1
+                            errors.append(f"{ticket.get('title', '?')}: {e}")
+                    if created:
+                        st.success(f"{created}개 티켓 생성 완료!")
+                    if failed:
+                        st.error(f"{failed}개 티켓 생성 실패")
+                        for err in errors:
+                            st.caption(err)
+            with col_bulk2:
+                if st.button("Clear Results"):
+                    st.session_state.ai_tickets = None
+                    st.rerun()
+
+            st.divider()
+
             for idx, ticket in enumerate(tickets):
                 with st.expander(f"Ticket {idx + 1}: {ticket['title']}", expanded=True):
                     st.markdown(f"**Description:** {ticket['description']}")
@@ -227,8 +279,8 @@ elif mode == "AI Auto-Generate":
                     if sessions:
                         st.markdown("**Sessions:**")
                         for session_idx, session in enumerate(sessions):
-                            st.markdown(f"  {session_idx + 1}. **{session['agent_name']}** ({session['cli_provider']})")
-                            st.markdown(f"     - Instruction: {session['instruction']}")
+                            st.markdown(f"  {session_idx + 1}. **{session.get('agent_name', 'unknown')}** ({session.get('cli_provider', 'claude')})")
+                            st.markdown(f"     - Instruction: {session.get('instruction', '')}")
                             if session.get("depends_on"):
                                 st.markdown(f"     - Depends on: {', '.join(session['depends_on'])}")
                             if session.get("produces"):
@@ -236,13 +288,19 @@ elif mode == "AI Auto-Generate":
 
                     if st.button(f"Create This Ticket", key=f"create_{idx}"):
                         try:
+                            # Collect all produces within this ticket
+                            internal_produces = set()
+                            for s in sessions:
+                                internal_produces.update(s.get("produces", []))
+
                             clean_sessions = []
                             for session in sessions:
+                                depends_on = [d for d in session.get("depends_on", []) if d in internal_produces]
                                 clean_sessions.append({
                                     "agent_name": session.get("agent_name", ""),
                                     "cli_provider": session.get("cli_provider", "claude"),
                                     "instruction": session.get("instruction", ""),
-                                    "depends_on": session.get("depends_on", []),
+                                    "depends_on": depends_on,
                                     "produces": session.get("produces", [])
                                 })
                             post("/api/tickets/", json={
@@ -258,7 +316,3 @@ elif mode == "AI Auto-Generate":
                             st.error(f"Failed: {e}")
         else:
             st.warning("No tickets generated. Try providing more details.")
-
-        if st.button("Clear Results"):
-            st.session_state.ai_tickets = None
-            st.rerun()

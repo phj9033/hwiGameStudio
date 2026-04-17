@@ -64,9 +64,9 @@ async def _get_ticket_detail(ticket_id: int, db) -> TicketResponse:
             produces=json.loads(row["produces"]) if row["produces"] else [],
             status=row["status"],
             error_message=row["error_message"],
-            input_tokens=row["input_tokens"],
-            output_tokens=row["output_tokens"],
-            estimated_cost=row["estimated_cost"],
+            input_tokens=row["input_tokens"] or 0,
+            output_tokens=row["output_tokens"] or 0,
+            estimated_cost=row["estimated_cost"] or 0,
             session_log_path=row["session_log_path"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
@@ -430,7 +430,17 @@ async def retry_ticket(
         background_tasks.add_task(executor.retry_session, session_id)
         return {"message": "Session retry started", "ticket_id": ticket_id, "session_id": session_id}
     else:
-        # Retry the whole ticket
+        # Reset all non-completed sessions and retry from scratch
+        async with get_db(backend.config.DATABASE_PATH) as db:
+            await db.execute(
+                """UPDATE agent_sessions
+                   SET status = 'pending', error_message = NULL, pid = NULL,
+                       started_at = NULL, completed_at = NULL,
+                       retry_count = retry_count + 1
+                   WHERE ticket_id = ? AND status IN ('failed', 'cancelled')""",
+                (ticket_id,),
+            )
+            await db.commit()
         background_tasks.add_task(executor.execute_ticket, ticket_id)
         return {"message": "Ticket retry started", "ticket_id": ticket_id}
 

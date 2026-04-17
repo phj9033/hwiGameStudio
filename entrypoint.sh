@@ -8,5 +8,11 @@ if [ -f /home/appuser/.codex-host/config.toml ]; then
 fi
 chown -R appuser:appuser /home/appuser/.codex
 
+# Copy Claude config (read-only mount) to writable location
+if [ -f /home/appuser/.claude-host.json ]; then
+    cp /home/appuser/.claude-host.json /home/appuser/.claude.json
+    chown appuser:appuser /home/appuser/.claude.json
+fi
+
 # Drop privileges and run the command as appuser
 exec gosu appuser "$@"

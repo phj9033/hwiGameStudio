@@ -52,18 +52,19 @@ try:
     else:
         st.caption(f"Showing {len(tickets)} of {total} tickets")
 
-        status_groups = {"open": [], "assigned": [], "running": [], "completed": []}
+        status_groups = {"open": [], "assigned": [], "running": [], "completed": [], "failed": [], "cancelled": []}
         for ticket in tickets:
             status = ticket.get("status", "open")
             if status in status_groups:
                 status_groups[status].append(ticket)
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         columns = [
             (col1, "open", "📝 Open", status_groups["open"]),
             (col2, "assigned", "👥 Assigned", status_groups["assigned"]),
             (col3, "running", "🚀 Running", status_groups["running"]),
-            (col4, "completed", "✅ Completed", status_groups["completed"])
+            (col4, "completed", "✅ Completed", status_groups["completed"]),
+            (col5, "failed", "❌ Failed", status_groups["failed"] + status_groups["cancelled"])
         ]
 
         for col, status_key, status_label, tickets_list in columns:
@@ -131,6 +132,14 @@ if st.session_state.get("show_ticket_detail"):
                     try:
                         post(f"/api/tickets/{ticket_id}/cancel")
                         st.success("Ticket cancelled!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
+            if ticket_status in ("failed", "cancelled"):
+                if st.button("🔄 Retry All", key="retry_ticket", type="primary", use_container_width=True):
+                    try:
+                        post(f"/api/tickets/{ticket_id}/retry")
+                        st.success("Ticket retry started!")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed: {e}")

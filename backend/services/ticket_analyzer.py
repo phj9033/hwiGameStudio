@@ -6,10 +6,24 @@ from backend.services.cli_runner import CLIRunner
 
 
 def extract_json(text: str) -> str:
-    """Extract JSON from text, stripping markdown code blocks if present."""
+    """Extract JSON from text, stripping markdown code blocks or surrounding prose."""
+    # Try markdown code block first
     match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
     if match:
         return match.group(1).strip()
+
+    # Try to find a JSON object in the text (first '{' to last matching '}')
+    start = text.find('{')
+    if start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+
     return text.strip()
 
 

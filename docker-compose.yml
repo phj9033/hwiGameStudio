@@ -15,6 +15,8 @@ services:
       - ~/.codex/config.toml:/home/appuser/.codex-host/config.toml:ro
       # Claude data directory (required for ccusage usage tracking)
       - ~/.claude:/home/appuser/.claude:ro
+      # Claude config file (required for CLI auth)
+      - ~/.claude.json:/home/appuser/.claude-host.json:ro
       # Only needed for AUTH_MODE=cli (OAuth). Remove for api/bedrock mode.
       # - ~/.claude.json:/root/.claude.json:ro
     env_file:
